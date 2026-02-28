@@ -7,7 +7,7 @@
  *   - app/api/cron/process-queue/route.js (processFotoRevista, processGeminiJob)
  */
 
-import { GoogleGenerativeAI } from '@google/generative-ai'
+import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from '@google/generative-ai'
 import Replicate from 'replicate'
 import { PROMPT_LIBRARY } from '../lib/prompts.js'
 
@@ -123,6 +123,24 @@ export async function generateWithGemini({ imageBase64, prompt }) {
   const genAI = getGeminiClient()
   const model = genAI.getGenerativeModel({
     model: process.env.VS_MODEL_ID || 'gemini-3.1-pro-preview',
+    safetySettings: [
+      {
+        category: HarmCategory.HARM_CATEGORY_HARASSMENT,
+        threshold: HarmBlockThreshold.BLOCK_NONE,
+      },
+      {
+        category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+        threshold: HarmBlockThreshold.BLOCK_NONE,
+      },
+      {
+        category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+        threshold: HarmBlockThreshold.BLOCK_NONE,
+      },
+      {
+        category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+        threshold: HarmBlockThreshold.BLOCK_NONE,
+      },
+    ],
   })
 
   try {
@@ -134,12 +152,19 @@ export async function generateWithGemini({ imageBase64, prompt }) {
     const response = await result.response
     const usageMetadata = response.usageMetadata || null
 
+    // Logging detailed blocking info if available
+    if (response.promptFeedback?.blockReason) {
+      console.warn('[ai] Gemini block reason:', response.promptFeedback.blockReason)
+    }
+
     const imagePart = response.candidates?.[0]?.content?.parts?.find(
       p => p.inlineData?.mimeType?.startsWith('image/')
     )
 
     if (!imagePart) {
-      throw new Error('Gemini não retornou imagem na resposta')
+      // Try to extract text explanation if image is missing
+      const textPart = response.text ? response.text() : 'No text explanation provided.'
+      throw new Error(`Gemini não retornou imagem. Resposta textual: "${textPart}"`)
     }
 
     return {
