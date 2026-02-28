@@ -14,7 +14,7 @@ import { PROMPT_LIBRARY } from '../lib/prompts.js'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const CLEAN_UP_PROMPT = `You are a photo retouching tool, not an interior designer. Your ONLY task is to digitally REMOVE clutter and mess from the photo. You do NOT add, install, replace, or improve anything.
+const CLEAN_UP_PROMPT = `You are a professional real estate photo editor. Your task has two parts: (1) digitally REMOVE clutter and mess, and (2) apply a fresh coat of paint to walls and ceiling as described below.
 
 ━━━ GEOMETRIA — BLOQUEADA ABSOLUTAMENTE ━━━
 A imagem de saida DEVE ter:
@@ -23,33 +23,37 @@ A imagem de saida DEVE ter:
 - Nenhum recorte, ampliacao, rotacao ou mudanca de enquadramento.
 Se voce alterar o enquadramento de qualquer forma, a tarefa falhou.
 
-━━━ ZERO ADICOES — PROIBIDO INSERIR QUALQUER COISA ━━━
-Nao insira absolutamente nada que nao esteja presente na foto original:
-- PROIBIDO: luminarias, abajures, pendentes, spots ou qualquer tipo de iluminacao.
-- PROIBIDO: moveis, tapetes, plantas, quadros, vasos, objetos decorativos.
-- PROIBIDO: substituicao de piso, teto, paredes ou qualquer elemento estrutural.
-- PROIBIDO: pintura, renovacao ou melhoria visual de qualquer superficie.
-Sua unica acao permitida e REMOVER itens de baguncca ja existentes.
+━━━ PINTURA DE PAREDES E TETO — OBRIGATORIA ━━━
+Aplique pintura nova e uniforme nas paredes e no teto do recinto:
+- TETO: branco puro (warm white), sem textura aparente, aspecto de tinta latex recém-aplicada.
+- PAREDES: escolha automaticamente a cor neutra mais adequada ao ambiente entre as tres opcoes abaixo, priorizando harmonia com o piso e mobiliario existente:
+  a) Branco off-white (tom ligeiramente quente, ex: #F5F0E8)
+  b) Palha / areia clara (tom bege suave, ex: #EDE0C4)
+  c) Pessego claro (tom rosado suave, ex: #F2D9C8)
+- A pintura deve cobrir uniformemente toda a extensao de cada parede visivel, inclusive em torno de portas, janelas, rodapes e quinas.
+- Mantenha interruptores, tomadas, rodapes, portas, janelas e qualquer elemento fixo NO MESMO LUGAR e formato — apenas a cor da parede/teto muda.
+- A aparencia final deve ser fotorrealista, como se o ambiente tivesse sido pintado por um profissional.
 
-━━━ PRESERVACAO DE MATERIAIS — OBRIGATORIA ━━━
-- O piso deve manter seu material, cor, textura e padrao IDENTICOS ao original. Se houver sujeira, remova apenas a sujeira superficial SEM alterar o material subjacente.
-- Paredes, teto e todas as superficies fixas devem manter cor, textura e estado exatos da foto original (manchas de umidade antigas, reboco bruto, tinta descascada devem PERMANECER se forem estruturais).
-- Luminarias, interruptores, tomadas e instalacoes fixas existentes devem permanecer EXATAMENTE como estao.
-
-━━━ O QUE REMOVER (BAGUNCCA) ━━━
-Remova apenas objetos transientes, pessoais e de consumo fora do lugar:
+━━━ REMOCAO DE BAGUNCCA — OBRIGATORIA ━━━
+Remova todos os objetos transientes, pessoais e de consumo fora do lugar:
 - Cozinhas: louças sujas, panelas, panos, detergentes, alimentos, sacolas.
 - Banheiros: toalhas usadas, produtos de higiene, lixo, tapetes amassados.
 - Quartos: roupas, sapatos, bolsas, cabides soltos, malas.
-- Salas/Escritorios: papeis, cabos, eletrônicos pessoais, caixas, embalagens.
+- Salas/Escritorios: papeis, cabos, eletronicos pessoais, caixas, embalagens.
 - Geral: entulho, materiais de construcao soltos, lixo de qualquer tipo.
+
+━━━ PRESERVACAO DO PISO ━━━
+- O piso deve manter seu material, cor, textura e padrao IDENTICOS ao original.
+- Se houver sujeira, remova apenas a sujeira superficial SEM alterar o material subjacente.
 
 ━━━ O QUE NUNCA TOCAR ━━━
 - Moveis grandes (sofas, camas, mesas, estantes, geladeira, fogao): permanecem no lugar EXATO.
 - Decoracao fixa (quadros na parede, vasos grandes, plantas permanentes): permanecem.
+- Luminarias, spots e instalacoes fixas: permanecem no lugar exato.
 - Iluminacao natural: mantenha as condicoes exatas de luz, sombra e reflexos.
+- PROIBIDO adicionar qualquer mobiliario, tapete, planta ou objeto decorativo novo.
 
-Resultado esperado: A mesma fotografia da entrada, com a mesma proporcao e enquadramento, mostrando o ambiente exatamente como ele e — porem sem a baguncca superficial.`
+Resultado esperado: A mesma fotografia da entrada, mesmo enquadramento e proporcao, mostrando o ambiente limpo, organizado e com paredes e teto recém-pintados em tom neutro claro.`
 
 const STAGING_UNIVERSAL_RULES = `REGRA UNIVERSAL DE POSICIONAMENTO - OBRIGATORIA E ABSOLUTA:
 Nenhum movel, tapete, objeto decorativo ou qualquer elemento inserido pode obstruir, bloquear, cobrir parcialmente ou reduzir a passagem de PORTAS, JANELAS, CORREDORES ou qualquer abertura visivel no ambiente. Todos os acessos e aberturas devem permanecer completamente desobstruidos e visiveis na imagem final, exatamente como estao na foto original.`
@@ -119,7 +123,7 @@ export async function generateWithGemini({ imageBase64, prompt, mimeType = 'imag
   // Para limpar-baguncca usamos prefixo diferente que enfatiza "não adicionar nada".
   const isCleanup = prompt === CLEAN_UP_PROMPT
   const actionPrompt = isCleanup
-    ? `Remove only the clutter and mess from this photo. Do not add, replace or change anything else: ${prompt}`
+    ? `Edit this real estate photo: remove all clutter and mess, then repaint the walls and ceiling with a fresh neutral color as instructed. Follow all rules exactly: ${prompt}`
     : `Edite esta imagem aplicando o seguinte: ${prompt}`
 
   // Para edição (limpar-baguncca), NÃO forçamos aspectRatio — o modelo deve
