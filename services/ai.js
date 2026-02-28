@@ -176,6 +176,14 @@ export async function generateWithGemini({ imageBase64, prompt }) {
 
       // Iterar parts corretamente conforme nova documentação
       const candidate = response.candidates?.[0]
+
+      // Log para diagnóstico profundo
+      if (candidate) {
+         console.log('[ai] Finish reason:', candidate.finishReason)
+         console.log('[ai] Safety ratings:', JSON.stringify(candidate.safetyRatings))
+         console.log('[ai] Parts count:', candidate.content?.parts?.length)
+      }
+
       const textPart = candidate?.content?.parts?.find(p => p.text)
       const imagePart = candidate?.content?.parts?.find(p => p.inlineData)
 
