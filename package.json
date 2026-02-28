@@ -1,0 +1,21 @@
+{
+  "name": "gira-chave-worker",
+  "version": "1.0.0",
+  "description": "Standalone job processor for GiraChavePro — Gemini + Replicate via Supabase queue",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.600.0",
+    "@google/generative-ai": "^0.21.0",
+    "@supabase/supabase-js": "^2.45.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "p-limit": "^6.1.0",
+    "replicate": "^1.0.1",
+    "resend": "^4.0.0"
+  }
+}
