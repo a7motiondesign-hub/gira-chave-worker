@@ -125,8 +125,10 @@ function adaptPrompt(existingPrompt, roomType = '') {
  */
 export async function generateWithGemini({ imageBase64, prompt }) {
   const genAI = getGeminiClient()
+  // Atualizado para Gemini 3.1 Flash Image (lançamento Fev/2026) conforme solicitado.
+  // Ajuste o VS_MODEL_ID no .env se o ID oficial for diferente.
   const model = genAI.getGenerativeModel({
-    model: process.env.VS_MODEL_ID || 'gemini-3.1-pro-preview',
+    model: process.env.VS_MODEL_ID || 'gemini-3.1-flash-image',
     safetySettings: [
       {
         category: HarmCategory.HARM_CATEGORY_HARASSMENT,
