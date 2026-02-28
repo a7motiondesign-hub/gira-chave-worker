@@ -17,9 +17,11 @@ const MODEL_PRICING = {
   'gemini-1.5-pro':                 { input: 1.25,   output: 5.00,   cached: 0.3125  },
   'gemini-2.5-pro-preview-tts':     { input: 1.00,   output: 20.00,  cached: 0.25    },
   // Image generation models — output tokens are image pixels, priced at premium
-  'gemini-3-pro-image-preview':     { input: 2.00,   output: 120.00, cached: 0.50    },
+  'gemini-3-pro-image-preview':         { input: 2.00,  output: 120.00, cached: 0.50 },
   // TODO: Confirm official pricing for gemini-3.1-pro-preview at https://ai.google.dev/pricing
-  'gemini-3.1-pro-preview':         { input: 2.00,   output: 120.00, cached: 0.50    },
+  'gemini-3.1-pro-preview':             { input: 2.00,  output: 120.00, cached: 0.50 },
+  // Flash image model (actually used after model guard) — pricing TBD, using flash-2.0 as proxy
+  'gemini-3.1-flash-image-preview':     { input: 0.10,  output: 0.40,  cached: 0.025 },
 }
 
 function calculateTokenCost(model, promptTokens, completionTokens, { cachedTokens = 0, thoughtsTokens = 0 } = {}) {

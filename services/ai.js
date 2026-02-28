@@ -184,10 +184,11 @@ export async function generateWithGemini({ imageBase64, prompt, mimeType = 'imag
       imageBase64: imageData,
       mimeType: imageMime,
       usageMetadata: response.usageMetadata || null,
+      modelId,   // modelo REAL usado (após model guard)
     }
   } catch (err) {
     console.error('[ai] Gemini error:', err.message)
-    return { success: false, error: err.message, usageMetadata: null }
+    return { success: false, error: err.message, usageMetadata: null, modelId }
   }
 }
 

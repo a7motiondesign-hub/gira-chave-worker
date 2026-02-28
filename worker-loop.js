@@ -60,10 +60,11 @@ async function processGeminiJob(job) {
   const vsDurationMs = Date.now() - vsStart
 
   // Log AI usage (fire-and-forget)
+  // Usa result.modelId — o modelo REAL após override do model guard — não o env var
   logAiUsage({
     userId: job.user_id,
     sessionId: job.id,
-    model: process.env.VS_MODEL_ID || 'gemini-3.1-pro-preview',
+    model: result.modelId || 'gemini-3.1-flash-image-preview',
     feature: job.service === 'limpar-baguncca' ? 'limpar_baguncca' : 'virtual_staging',
     usageMetadata: result.usageMetadata,
     durationMs: vsDurationMs,
