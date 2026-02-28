@@ -91,11 +91,14 @@ function adaptPrompt(existingPrompt, roomType = '') {
   )
 }
 
-// ── Gemini image generation (NEW SDK with responseModalities) ─────────────────
+// ── Gemini image generation ───────────────────────────────────────────────────
 
 export async function generateWithGemini({ imageBase64, prompt }) {
   const client = getClient()
-  const modelId = process.env.VS_MODEL_ID || 'gemini-2.5-flash-preview-image-generation'
+
+  // Modelo seguro para image-to-image. Se VS_MODEL_ID não suportar imagem, o fallback cobre.
+  const MODEL_FALLBACK = 'gemini-2.5-flash-preview-image-generation'
+  const modelId = process.env.VS_MODEL_ID || MODEL_FALLBACK
   console.log('[ai] Using model:', modelId)
 
   try {
@@ -104,50 +107,55 @@ export async function generateWithGemini({ imageBase64, prompt }) {
       contents: [
         {
           parts: [
+            // Imagem de referência (image-to-image)
             { inlineData: { data: imageBase64, mimeType: 'image/jpeg' } },
+            // Instrução de transformação
             { text: prompt },
           ],
         },
       ],
       config: {
-        responseModalities: ['TEXT', 'IMAGE'],
+        // Forçar OUTPUT exclusivo de imagem.
+        // "TEXT" removido propositalmente: quando ambos são listados, o modelo
+        // entra em modo VQA (responde em texto explicando o que faria).
+        // Com apenas "IMAGE", ele é forçado à transformação visual.
+        responseModalities: ['IMAGE'],
       },
     })
 
-    // Debug: log raw response structure
-    const candidate = response.candidates?.[0]
-    console.log('[ai] Finish reason:', candidate?.finishReason)
-    console.log('[ai] Candidate keys:', candidate ? Object.keys(candidate) : 'no candidate')
-    console.log('[ai] Content keys:', candidate?.content ? Object.keys(candidate.content) : 'no content')
-    console.log('[ai] Parts count:', candidate?.content?.parts?.length)
+    // ── DUMP BRUTO DE DIAGNÓSTICO (remova após estabilizar) ──────────────────
+    // Essencial porque a estrutura da resposta muda entre versões do SDK/modelos.
+    console.log('[DEBUG AI RESPONSE DUMP]:', JSON.stringify(response, null, 2))
 
-    // Some SDK versions expose parts directly on response
-    const parts = candidate?.content?.parts || response?.parts || []
-    console.log('[ai] Effective parts count:', parts.length)
+    // ── Extração Defensiva Multi-Path ────────────────────────────────────────
+    // A localização do base64 varia entre famílias de modelos (Gemini vs Imagen):
+    const base64Image =
+      // Path 1: Familia Imagen via Gemini API
+      response.generatedImages?.[0]?.image?.imageBytes ||
+      // Path 2: Gemini Flash Multimodal (candidates[].content.parts[])
+      response.candidates?.[0]?.content?.parts?.find(p => p.inlineData)?.inlineData?.data ||
+      // Path 3: parts expostos diretamente na raiz (algumas versões do SDK)
+      response.parts?.find(p => p.inlineData)?.inlineData?.data ||
+      null
 
-    let textResponse = ''
-    let imageData = null
-    let imageMime = 'image/png'
+    const imageMime =
+      response.generatedImages?.[0]?.image?.mimeType ||
+      response.candidates?.[0]?.content?.parts?.find(p => p.inlineData)?.inlineData?.mimeType ||
+      'image/png'
 
-    for (const part of parts) {
-      if (part.text) {
-        textResponse = part.text
-        console.log('[ai] Text part:', part.text.substring(0, 200))
-      }
-      if (part.inlineData) {
-        imageData = part.inlineData.data
-        imageMime = part.inlineData.mimeType || 'image/png'
-        console.log('[ai] Image part found, mimeType:', imageMime)
-      }
-    }
+    const finishReason = response.candidates?.[0]?.finishReason
+    console.log('[ai] Finish reason:', finishReason)
 
-    if (!imageData) {
-      throw new Error(`Gemini nao retornou imagem. Texto: "${textResponse || 'Sem resposta'}"`)
+    if (!base64Image) {
+      // Extrair texto da resposta para diagnóstico (se o modelo ignorou a restrição e respondeu em texto)
+      const textFallback =
+        response.candidates?.[0]?.content?.parts?.find(p => p.text)?.text || 'Sem resposta'
+      throw new Error(`Gemini nao retornou imagem. Texto: "${textFallback}"`)
     }
 
     return {
       success: true,
-      imageBase64: imageData,
+      imageBase64: base64Image,
       mimeType: imageMime,
       usageMetadata: response.usageMetadata || null,
     }
