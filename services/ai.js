@@ -93,13 +93,21 @@ function adaptPrompt(existingPrompt, roomType = '') {
 
 // ── Gemini image generation ───────────────────────────────────────────────────
 
-export async function generateWithGemini({ imageBase64, prompt }) {
+export async function generateWithGemini({ imageBase64, prompt, mimeType = 'image/jpeg' }) {
   const client = getClient()
 
-  // Modelo seguro para image-to-image. Se VS_MODEL_ID não suportar imagem, o fallback cobre.
-  const MODEL_FALLBACK = 'gemini-2.5-flash-preview-image-generation'
-  const modelId = process.env.VS_MODEL_ID || MODEL_FALLBACK
+  // Proteção de modelo: modelos "pro" são texto-only e retornam finishReason: "NO_IMAGE".
+  // Apenas modelos da família flash-image suportam Image-to-Image.
+  const SAFE_MODEL = 'gemini-3.1-flash-image-preview'
+  const envModel = process.env.VS_MODEL_ID || ''
+  const modelId = (!envModel || envModel.toLowerCase().includes('pro'))
+    ? (console.log(`[ai] Override: '${envModel || 'vazio'}' não suporta imagem. Usando ${SAFE_MODEL}`), SAFE_MODEL)
+    : envModel
   console.log('[ai] Using model:', modelId)
+
+  // Verbo imperativo prefixado ao prompt evita que o modelo entre em modo VQA
+  // (onde descreve a imagem em vez de transformá-la).
+  const actionPrompt = `Edite esta imagem aplicando o seguinte: ${prompt}`
 
   try {
     const response = await client.models.generateContent({
@@ -107,55 +115,56 @@ export async function generateWithGemini({ imageBase64, prompt }) {
       contents: [
         {
           parts: [
-            // Imagem de referência (image-to-image)
-            { inlineData: { data: imageBase64, mimeType: 'image/jpeg' } },
-            // Instrução de transformação
-            { text: prompt },
+            // Prompt de ação primeiro
+            { text: actionPrompt },
+            // Imagem de referência para transformação
+            { inlineData: { data: imageBase64, mimeType } },
           ],
         },
       ],
       config: {
-        // Forçar OUTPUT exclusivo de imagem.
-        // "TEXT" removido propositalmente: quando ambos são listados, o modelo
-        // entra em modo VQA (responde em texto explicando o que faria).
-        // Com apenas "IMAGE", ele é forçado à transformação visual.
+        // IMAGE exclusivo: remover TEXT evita resposta VQA ("Vejo na imagem...")
         responseModalities: ['IMAGE'],
+        imageConfig: {
+          aspectRatio: '4:3',
+          imageSize: '2K', // CRÍTICO: maiúsculo. '2k' é rejeitado silenciosamente pela API.
+        },
       },
     })
 
-    // ── DUMP BRUTO DE DIAGNÓSTICO (remova após estabilizar) ──────────────────
-    // Essencial porque a estrutura da resposta muda entre versões do SDK/modelos.
+    // Dump bruto para diagnóstico — remove após estabilizar
     console.log('[DEBUG AI RESPONSE DUMP]:', JSON.stringify(response, null, 2))
 
-    // ── Extração Defensiva Multi-Path ────────────────────────────────────────
-    // A localização do base64 varia entre famílias de modelos (Gemini vs Imagen):
-    const base64Image =
-      // Path 1: Familia Imagen via Gemini API
-      response.generatedImages?.[0]?.image?.imageBytes ||
-      // Path 2: Gemini Flash Multimodal (candidates[].content.parts[])
-      response.candidates?.[0]?.content?.parts?.find(p => p.inlineData)?.inlineData?.data ||
-      // Path 3: parts expostos diretamente na raiz (algumas versões do SDK)
-      response.parts?.find(p => p.inlineData)?.inlineData?.data ||
-      null
-
-    const imageMime =
-      response.generatedImages?.[0]?.image?.mimeType ||
-      response.candidates?.[0]?.content?.parts?.find(p => p.inlineData)?.inlineData?.mimeType ||
-      'image/png'
-
-    const finishReason = response.candidates?.[0]?.finishReason
+    const candidate = response.candidates?.[0]
+    const finishReason = candidate?.finishReason
     console.log('[ai] Finish reason:', finishReason)
 
-    if (!base64Image) {
-      // Extrair texto da resposta para diagnóstico (se o modelo ignorou a restrição e respondeu em texto)
-      const textFallback =
-        response.candidates?.[0]?.content?.parts?.find(p => p.text)?.text || 'Sem resposta'
-      throw new Error(`Gemini nao retornou imagem. Texto: "${textFallback}"`)
+    // Detectar bloqueio por safety filters
+    if (finishReason === 'SAFETY' || finishReason === 'IMAGE_SAFETY') {
+      const ratings = JSON.stringify(candidate?.safetyRatings || {})
+      throw new Error(`Bloqueado por filtro de segurança. Ratings: ${ratings}`)
     }
 
+    // Detectar modelo errado (pro ou texto-only)
+    if (finishReason === 'NO_IMAGE') {
+      throw new Error(`Modelo '${modelId}' não suporta geração de imagem (NO_IMAGE). Verifique VS_MODEL_ID.`)
+    }
+
+    // Extração defensiva: suporte a camelCase (inlineData) e snake_case (inline_data)
+    const parts = candidate?.content?.parts || []
+    const imagePart = parts.find(p => p.inlineData?.data || p.inline_data?.data)
+    const imageData = imagePart?.inlineData?.data || imagePart?.inline_data?.data || null
+    const imageMime = imagePart?.inlineData?.mimeType || imagePart?.inline_data?.mime_type || 'image/png'
+
+    if (!imageData) {
+      const textFallback = parts.find(p => p.text)?.text || 'Sem resposta'
+      throw new Error(`Gemini nao retornou imagem. Parts: ${parts.length}. Texto: "${textFallback.substring(0, 300)}"`)
+    }
+
+    console.log('[ai] Imagem extraída com sucesso. mimeType:', imageMime)
     return {
       success: true,
-      imageBase64: base64Image,
+      imageBase64: imageData,
       mimeType: imageMime,
       usageMetadata: response.usageMetadata || null,
     }
