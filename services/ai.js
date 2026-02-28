@@ -14,33 +14,42 @@ import { PROMPT_LIBRARY } from '../lib/prompts.js'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const CLEAN_UP_PROMPT = `Edit and return the provided real estate photo with a professional virtual cleanup applied. OUTPUT: Photorealistic cleaned interior photo, same resolution and framing as input.
+const CLEAN_UP_PROMPT = `You are a photo retouching tool, not an interior designer. Your ONLY task is to digitally REMOVE clutter and mess from the photo. You do NOT add, install, replace, or improve anything.
 
-Atue como um editor profissional de fotografia imobiliaria de alto padrao. Sua tarefa e realizar uma faxina virtual completa e impecavel na imagem fornecida, preparando-a para um anuncio de imovel premium.
+━━━ GEOMETRIA — BLOQUEADA ABSOLUTAMENTE ━━━
+A imagem de saida DEVE ter:
+- Exactamente a mesma proporcao (aspect ratio) da imagem de entrada.
+- Exactamente o mesmo angulo de camera, zoom, campo visual (FOV) e perspectiva.
+- Nenhum recorte, ampliacao, rotacao ou mudanca de enquadramento.
+Se voce alterar o enquadramento de qualquer forma, a tarefa falhou.
 
-INSTRUCOES DE LIMPEZA E ORGANIZACAO (UNIVERSAL PARA QUALQUER RECINTO):
+━━━ ZERO ADICOES — PROIBIDO INSERIR QUALQUER COISA ━━━
+Nao insira absolutamente nada que nao esteja presente na foto original:
+- PROIBIDO: luminarias, abajures, pendentes, spots ou qualquer tipo de iluminacao.
+- PROIBIDO: moveis, tapetes, plantas, quadros, vasos, objetos decorativos.
+- PROIBIDO: substituicao de piso, teto, paredes ou qualquer elemento estrutural.
+- PROIBIDO: pintura, renovacao ou melhoria visual de qualquer superficie.
+Sua unica acao permitida e REMOVER itens de baguncca ja existentes.
 
-1. REMOCAO TOTAL DE BAGUNCCA: Identifique e remova todos os objetos transientes, pessoais e de consumo que nao fazem parte da decoracao permanente ou do mobiliario fixo. Isso inclui, mas nao se limita a:
-   - Em Cozinhas/Salas de Jantar: Loucas sujas ou limpas, panelas, talheres, panos de prato, detergentes, esponjas, alimentos, garrafas, sacolas plasticas e eletroportateis pequenos fora de lugar.
-   - Em Banheiros: Toalhas usadas, roupoes, produtos de higiene pessoal (shampoos, sabonetes, escovas de dente, cremes), papel higienico fora do suporte, lixo e tapetes de banho amassados.
-   - Em Quartos/Closets: Roupas (limpas ou sujas), sapatos, bolsas, cabides soltos, joias, maquiagem, malas e brinquedos.
-   - Em Escritorios/Salas: Papeis soltos, canetas, cabos, carregadores, eletronicos pessoais (celulares, tablets, laptops se parecerem em uso), controles remotos, revistas, jornais, caixas e encomendas.
-   - Geral: Qualquer tipo de lixo, embalagem ou item fora do lugar.
+━━━ PRESERVACAO DE MATERIAIS — OBRIGATORIA ━━━
+- O piso deve manter seu material, cor, textura e padrao IDENTICOS ao original. Se houver sujeira, remova apenas a sujeira superficial SEM alterar o material subjacente.
+- Paredes, teto e todas as superficies fixas devem manter cor, textura e estado exatos da foto original (manchas de umidade antigas, reboco bruto, tinta descascada devem PERMANECER se forem estruturais).
+- Luminarias, interruptores, tomadas e instalacoes fixas existentes devem permanecer EXATAMENTE como estao.
 
-2. ORGANIZACAO DE SUPERFICIES:
-   - Deixe todas as superficies horizontais (bancadas, mesas, criados-mudos, escrivaninhas, chao) completamente limpas, desimpedidas e brilhantes, como se tivessem acabado de ser faxinadas.
-   - Se houver camas: Deixe-as perfeitamente feitas, com lencois e colchas esticados de forma hoteleira, sem rugas.
-   - Se houver sofas/poltronas: Endireite as almofadas do assento e encosto, deixando-as com aspecto de novas e alinhadas.
-   - Endireite cadeiras e banquetas para que fiquem alinhadas com as mesas ou bancadas.
+━━━ O QUE REMOVER (BAGUNCCA) ━━━
+Remova apenas objetos transientes, pessoais e de consumo fora do lugar:
+- Cozinhas: louças sujas, panelas, panos, detergentes, alimentos, sacolas.
+- Banheiros: toalhas usadas, produtos de higiene, lixo, tapetes amassados.
+- Quartos: roupas, sapatos, bolsas, cabides soltos, malas.
+- Salas/Escritorios: papeis, cabos, eletrônicos pessoais, caixas, embalagens.
+- Geral: entulho, materiais de construcao soltos, lixo de qualquer tipo.
 
-RESTRICOES CRITICAS E ABSOLUTAS (O QUE NAO TOCAR):
+━━━ O QUE NUNCA TOCAR ━━━
+- Moveis grandes (sofas, camas, mesas, estantes, geladeira, fogao): permanecem no lugar EXATO.
+- Decoracao fixa (quadros na parede, vasos grandes, plantas permanentes): permanecem.
+- Iluminacao natural: mantenha as condicoes exatas de luz, sombra e reflexos.
 
-1. NAO ALTERE A ESTRUTURA: Nao mude paredes, teto, piso, janelas, portas, luminarias fixas, armarios embutidos ou bancadas fixas.
-2. NAO MOVA OU REMOVA MOBILIARIO: Sofas, camas, mesas, cadeiras, estantes, racks, geladeiras, fogoes e moveis grandes devem permanecer EXATAMENTE onde estao na foto original.
-3. NAO MUDE O DESIGN: Nao altere cores de tintas, texturas de materiais, estampas de tecidos ou o estilo da decoracao existente (quadros na parede, vasos decorativos grandes e plantas devem permanecer).
-4. NAO ALTERE A ILUMINACAO: Mantenha as condicoes exatas de luz, sombra e reflexos da fotografia original. O resultado deve ser fotorrealista e indistinguivel da foto original, exceto pela limpeza.
-
-Resultado esperado: Uma fotografia imobiliaria profissional, mostrando o recinto exatamente como ele e, mas em seu estado mais limpo, organizado e apresentavel possivel.`
+Resultado esperado: A mesma fotografia da entrada, com a mesma proporcao e enquadramento, mostrando o ambiente exatamente como ele e — porem sem a baguncca superficial.`
 
 const STAGING_UNIVERSAL_RULES = `REGRA UNIVERSAL DE POSICIONAMENTO - OBRIGATORIA E ABSOLUTA:
 Nenhum movel, tapete, objeto decorativo ou qualquer elemento inserido pode obstruir, bloquear, cobrir parcialmente ou reduzir a passagem de PORTAS, JANELAS, CORREDORES ou qualquer abertura visivel no ambiente. Todos os acessos e aberturas devem permanecer completamente desobstruidos e visiveis na imagem final, exatamente como estao na foto original.`
@@ -107,7 +116,18 @@ export async function generateWithGemini({ imageBase64, prompt, mimeType = 'imag
 
   // Verbo imperativo prefixado ao prompt evita que o modelo entre em modo VQA
   // (onde descreve a imagem em vez de transformá-la).
-  const actionPrompt = `Edite esta imagem aplicando o seguinte: ${prompt}`
+  // Para limpar-baguncca usamos prefixo diferente que enfatiza "não adicionar nada".
+  const isCleanup = prompt === CLEAN_UP_PROMPT
+  const actionPrompt = isCleanup
+    ? `Remove only the clutter and mess from this photo. Do not add, replace or change anything else: ${prompt}`
+    : `Edite esta imagem aplicando o seguinte: ${prompt}`
+
+  // Para edição (limpar-baguncca), NÃO forçamos aspectRatio — o modelo deve
+  // respeitar as dimensões originais da imagem de entrada.
+  // Para staging (texto->imagem), usamos 4:3 como referência.
+  const imageConfig = isCleanup
+    ? { imageSize: '2K' }
+    : { aspectRatio: '4:3', imageSize: '2K' }
 
   try {
     const response = await client.models.generateContent({
@@ -125,10 +145,7 @@ export async function generateWithGemini({ imageBase64, prompt, mimeType = 'imag
       config: {
         // IMAGE exclusivo: remover TEXT evita resposta VQA ("Vejo na imagem...")
         responseModalities: ['IMAGE'],
-        imageConfig: {
-          aspectRatio: '4:3',
-          imageSize: '2K', // CRÍTICO: maiúsculo. '2k' é rejeitado silenciosamente pela API.
-        },
+        imageConfig,
       },
     })
 
