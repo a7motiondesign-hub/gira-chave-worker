@@ -8,6 +8,7 @@
  */
 
 import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from '@google/generative-ai'
+import { GoogleGenAI } from '@google/genai'
 import Replicate from 'replicate'
 import { PROMPT_LIBRARY } from '../lib/prompts.js'
 
@@ -50,7 +51,7 @@ Nenhum movel, tapete, objeto decorativo ou qualquer elemento inserido pode obstr
 // ── Gemini client (singleton) ─────────────────────────────────────────────────
 
 let _genAI = null
-
+// SDK antigo (@google/generative-ai)
 function getGeminiClient() {
   if (!_genAI) {
     const apiKey = process.env.GOOGLE_VS_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY
@@ -58,6 +59,17 @@ function getGeminiClient() {
     _genAI = new GoogleGenerativeAI(apiKey)
   }
   return _genAI
+}
+
+// SDK Novo (@google/genai) para Gemini 3.1 Flash Image
+let _googleGenAI = null
+function getNewGeminiClient() {
+  if (!_googleGenAI) {
+    const apiKey = process.env.GOOGLE_VS_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY
+    if (!apiKey) throw new Error('[ai] GOOGLE_VS_API_KEY não configurada')
+    _googleGenAI = new GoogleGenAI({ apiKey }) // Novo formato de construtor
+  }
+  return _googleGenAI
 }
 
 // ── Prompt builder ────────────────────────────────────────────────────────────
@@ -123,64 +135,104 @@ function adaptPrompt(existingPrompt, roomType = '') {
  * @param {{ imageBase64: string, prompt: string }} params
  * @returns {Promise<{ success: boolean, imageBase64?: string, mimeType?: string, usageMetadata?: object, error?: string }>}
  */
+
+// ── Gemini image generation ───────────────────────────────────────────────────
+
+/**
+ * Calls Gemini to generate a virtual staging or clean-up image.
+ * Uses the NEW SDK (@google/genai) to support responseModalities: ["TEXT", "IMAGE"]
+ *
+ * @param {{ imageBase64: string, prompt: string }} params
+ * @returns {Promise<{ success: boolean, imageBase64?: string, mimeType?: string, usageMetadata?: object, error?: string }>}
+ */
 export async function generateWithGemini({ imageBase64, prompt }) {
-  const genAI = getGeminiClient()
-  // Atualizado para Gemini 3.1 Flash Image (lançamento Fev/2026) conforme solicitado.
-  // Ajuste o VS_MODEL_ID no .env se o ID oficial for diferente.
-  const model = genAI.getGenerativeModel({
-    model: process.env.VS_MODEL_ID || 'gemini-3.1-flash-image',
-    safetySettings: [
-      {
-        category: HarmCategory.HARM_CATEGORY_HARASSMENT,
-        threshold: HarmBlockThreshold.BLOCK_NONE,
-      },
-      {
-        category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-        threshold: HarmBlockThreshold.BLOCK_NONE,
-      },
-      {
-        category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-        threshold: HarmBlockThreshold.BLOCK_NONE,
-      },
-      {
-        category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-        threshold: HarmBlockThreshold.BLOCK_NONE,
-      },
-    ],
-  })
+  const modelId = process.env.VS_MODEL_ID || 'gemini-3.1-flash-image'
 
   try {
-    const result = await model.generateContent([
-      { inlineData: { data: imageBase64, mimeType: 'image/jpeg' } },
-      { text: prompt },
-    ])
+    // Se o modelo for 3.1 Flash Image, usamos o SDK novo para suportar responseModalities
+    if (modelId.includes('3.1') || modelId.includes('image')) {
+      const client = getNewGeminiClient()
+      
+      const response = await client.models.generateContent({
+        model: modelId,
+        contents: [
+          {
+            parts: [
+              { inlineData: { data: imageBase64, mimeType: 'image/jpeg' } },
+              { text: prompt }
+            ]
+          }
+        ],
+        config: {
+          responseModalities: ["TEXT", "IMAGE"],
+          safetySettings: [
+            { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+            { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+            { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+            { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
+          ]
+        }
+      })
 
-    const response = await result.response
-    const usageMetadata = response.usageMetadata || null
+      // Iterar parts corretamente conforme nova documentação
+      const candidate = response.candidates?.[0]
+      const textPart = candidate?.content?.parts?.find(p => p.text)
+      const imagePart = candidate?.content?.parts?.find(p => p.inlineData)
 
-    // Logging detailed blocking info if available
-    if (response.promptFeedback?.blockReason) {
-      console.warn('[ai] Gemini block reason:', response.promptFeedback.blockReason)
+      if (textPart && textPart.text) {
+        console.log('[ai] Gemini text response:', textPart.text)
+      }
+
+      if (!imagePart) {
+        throw new Error(`Gemini não retornou imagem. Texto: "${textPart?.text || 'Sem resposta'}"`)
+      }
+
+      return {
+        success: true,
+        imageBase64: imagePart.inlineData.data,
+        mimeType: imagePart.inlineData.mimeType || 'image/png',
+        usageMetadata: response.usageMetadata
+      }
+
+    } else {
+      // Fallback para modelos antigos (Pro Vision, 1.5 Flash) usando SDK antigo
+      // ... (Lógica antiga mantida abaixo se necessário, mas simplificarei para usar o novo sempre que possível se estável)
+      // Por segurança, mantemos o old client para modelos não-3.1 se o usuário trocar a ENV var.
+      
+      const genAI = getGeminiClient()
+      const model = genAI.getGenerativeModel({
+        model: modelId,
+        safetySettings: [
+          { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+          { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+          { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+          { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+        ],
+      })
+
+      const result = await model.generateContent([
+        { inlineData: { data: imageBase64, mimeType: 'image/jpeg' } },
+        { text: prompt },
+      ])
+      const response = await result.response
+      const imagePart = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData?.mimeType?.startsWith('image/'))
+      
+      if (!imagePart) throw new Error('Gemini (Legacy SDK) não retornou imagem.')
+      
+      return {
+        success: true,
+        imageBase64: imagePart.inlineData.data,
+        mimeType: imagePart.inlineData.mimeType,
+        usageMetadata: response.usageMetadata
+      }
     }
 
-    const imagePart = response.candidates?.[0]?.content?.parts?.find(
-      p => p.inlineData?.mimeType?.startsWith('image/')
-    )
-
-    if (!imagePart) {
-      // Try to extract text explanation if image is missing
-      const textPart = response.text ? response.text() : 'No text explanation provided.'
-      throw new Error(`Gemini não retornou imagem. Resposta textual: "${textPart}"`)
-    }
-
-    return {
-      success: true,
-      imageBase64: imagePart.inlineData.data,
-      mimeType: imagePart.inlineData.mimeType,
-      usageMetadata,
-    }
   } catch (err) {
     console.error('[ai] Gemini error:', err.message)
+    // Tenta extrair mensagem de erro detalhada do SDK novo
+    if (err.response?.promptFeedback) {
+       console.error('[ai] Block reason:', err.response.promptFeedback)
+    }
     return { success: false, error: err.message, usageMetadata: null }
   }
 }
