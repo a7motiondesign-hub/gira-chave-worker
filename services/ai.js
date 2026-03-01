@@ -112,13 +112,12 @@ export function buildGeminiPrompt(job) {
     PROMPT_LIBRARY[job.room_type]?.[job.style] ||
     PROMPT_LIBRARY.living_room.moderno_brasileiro
 
-  // TODOS os estilos (incluindo popular_brasileiro) passam pelo lock estrutural
-  return (
-    STRUCTURAL_LOCK_DIRECTIVE + '\n\n' +
-    PERSPECTIVE_LOCK + '\n\n' +
-    STAGING_UNIVERSAL_RULES + '\n\n' +
-    (job.style === 'popular_brasileiro' ? rawPrompt : adaptPrompt(rawPrompt, job.room_type))
-  )
+  const styledPrompt = job.style === 'popular_brasileiro'
+    ? rawPrompt
+    : adaptPrompt(rawPrompt, job.room_type)
+
+  // Estilo PRIMEIRO — modelo ancora no que FAZER antes de ler restrições
+  return styledPrompt + '\n\n' + STRUCTURAL_LOCK_DIRECTIVE + '\n\n' + PERSPECTIVE_LOCK + '\n\n' + STAGING_UNIVERSAL_RULES
 }
 
 function adaptPrompt(existingPrompt, roomType = '') {
@@ -128,16 +127,10 @@ function adaptPrompt(existingPrompt, roomType = '') {
     'interior space'
 
   return (
-    `Edit and return the provided real estate photo with professional virtual staging applied, ` +
-    `furnishing an empty or unfurnished ${detectedRoom}. ` +
-    `OUTPUT: Photorealistic furnished interior photo, same resolution and framing as input.\n\n` +
-    `STYLE REFERENCE (recreate this aesthetic in the room):\n${existingPrompt}\n\n` +
-    `CRITICAL RULES:\n` +
-    `- Preserve ALL architectural elements exactly (walls, floors, ceiling, windows, doors)\n` +
-    `- Maintain original camera angle, perspective, and lighting conditions\n` +
-    `- Add ONLY furniture, decor, and staging elements consistent with the style reference\n` +
-    `- Ensure photorealistic rendering indistinguishable from a real photograph\n` +
-    `- No text, watermarks, or UI elements`
+    `You are adding furniture to a real estate photo. Furnish this empty ${detectedRoom} EXACTLY as described below:\n\n` +
+    `${existingPrompt}\n\n` +
+    `OUTPUT: Photorealistic furnished interior photo, same resolution and framing as input. ` +
+    `Add ONLY furniture, decor, and staging elements. No text, watermarks, or UI elements.`
   )
 }
 
@@ -160,8 +153,8 @@ export async function generateWithGemini({ imageBase64, prompt, mimeType = 'imag
   // Para limpar-baguncca usamos prefixo diferente que enfatiza "não adicionar nada".
   const isCleanup = prompt.includes('REMOCAO DE BAGUNCCA') || prompt.includes('PINTURA DE PAREDES')
   const actionPrompt = isCleanup
-    ? `Edit this real estate photo: remove all clutter and mess, then repaint the walls and ceiling with a fresh neutral color as instructed. The output MUST have EXACTLY the same camera angle, perspective, framing, and dimensions as the input. Do NOT add walls or architectural elements that don't exist. Follow all rules exactly:\n\n${prompt}`
-    : `Edit this real estate photo adding furniture. CRITICAL: the output MUST preserve EXACTLY the same camera angle, perspective, framing, room geometry, and all architectural elements (walls, doors, windows, ceiling). Do NOT create walls, partitions, or architectural elements that do not exist in the original photo. Do NOT change the perspective or crop.\n\n${prompt}`
+    ? `Edit this real estate photo: remove clutter and repaint walls/ceiling as instructed. Same camera angle, framing and dimensions as input.\n\n${prompt}`
+    : `Edit this real estate photo by adding furniture. Follow the style description EXACTLY — specific furniture, materials, and colors described are mandatory.\n\n${prompt}`
 
   // Detectar aspect ratio real da imagem de entrada (JPEG/PNG/WebP header parse)
   const aspectRatio = detectAspectRatioFromBase64(imageBase64)
