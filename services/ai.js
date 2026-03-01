@@ -11,6 +11,7 @@
 import { GoogleGenAI } from '@google/genai'
 import Replicate from 'replicate'
 import { PROMPT_LIBRARY } from '../lib/prompts.js'
+import { detectAspectRatioFromBase64 } from '../lib/image-utils.js'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -126,12 +127,9 @@ export async function generateWithGemini({ imageBase64, prompt, mimeType = 'imag
     ? `Edit this real estate photo: remove all clutter and mess, then repaint the walls and ceiling with a fresh neutral color as instructed. Follow all rules exactly: ${prompt}`
     : `Edite esta imagem aplicando o seguinte: ${prompt}`
 
-  // Para edição (limpar-baguncca), NÃO forçamos aspectRatio — o modelo deve
-  // respeitar as dimensões originais da imagem de entrada.
-  // Para staging (texto->imagem), usamos 4:3 como referência.
-  const imageConfig = isCleanup
-    ? { imageSize: '2K' }
-    : { aspectRatio: '4:3', imageSize: '2K' }
+  // Detectar aspect ratio real da imagem de entrada (JPEG/PNG/WebP header parse)
+  const aspectRatio = detectAspectRatioFromBase64(imageBase64)
+  const imageConfig = { aspectRatio, imageSize: '2K' }
 
   try {
     const response = await client.models.generateContent({
