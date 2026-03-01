@@ -56,8 +56,40 @@ Remova todos os objetos transientes, pessoais e de consumo fora do lugar:
 
 Resultado esperado: A mesma fotografia da entrada, mesmo enquadramento e proporcao, mostrando o ambiente limpo, organizado e com paredes e teto recém-pintados em tom neutro claro.`
 
-const STAGING_UNIVERSAL_RULES = `REGRA UNIVERSAL DE POSICIONAMENTO - OBRIGATORIA E ABSOLUTA:
-Nenhum movel, tapete, objeto decorativo ou qualquer elemento inserido pode obstruir, bloquear, cobrir parcialmente ou reduzir a passagem de PORTAS, JANELAS, CORREDORES ou qualquer abertura visivel no ambiente. Todos os acessos e aberturas devem permanecer completamente desobstruidos e visiveis na imagem final, exatamente como estao na foto original.`
+const STRUCTURAL_LOCK_DIRECTIVE = `━━━ PRIORIDADE ZERO — BLOQUEIO ESTRUTURAL ABSOLUTO E INVIOLAVEL ━━━
+Todos os elementos arquitetonicos e estruturais da fotografia original DEVEM permanecer PIXEL-PERFECT e COMPLETAMENTE INALTERADOS. Esta regra SOBRESCREVE todas as outras instrucoes sem excecao.
+
+RESOLUCAO E DIMENSOES:
+A imagem de saida DEVE preservar EXATAMENTE a mesma resolucao, dimensoes e aspect ratio da fotografia de entrada. NAO recortar, preencher, redimensionar, letterbox ou alterar as dimensoes em pixel de forma alguma.
+
+ELEMENTOS QUE NUNCA DEVEM SER ALTERADOS, REMOVIDOS, MOVIDOS, REDIMENSIONADOS, RECOLORIDOS OU OBSTRUIDOS:
+- PORTAS: paineis, batentes, macanetas, dobradicas, fechaduras, soleiras, molduras
+- JANELAS: caixilhos, vidros, peitoris, grades, persianas, trilhos
+- PAREDES: superficie, cor de tinta, textura, rodapes, molduras de gesso, tomadas, interruptores
+- PISOS: material, cor, padrao, textura, transicoes
+- TETO: superficie, altura, spots, ventiladores, molduras, vigas
+- ABERTURAS: corredores, arcos, passagens — TODOS devem permanecer totalmente visiveis e desobstruidos
+- INSTALACOES FIXAS: armarios embutidos, bancadas fixas, ar condicionado, aquecedores
+
+VERIFICACAO OBRIGATORIA ANTES DO OUTPUT:
+Conte cada porta e janela visivel na imagem original. O output DEVE ter o MESMO numero de portas e janelas, nas MESMAS posicoes, com as MESMAS dimensoes. Se QUALQUER porta ou janela estiver faltando, alterada ou parcialmente escondida — o output e INVALIDO.
+
+NENHUM movel, tapete, cortina, planta ou objeto decorativo pode bloquear, cobrir ou reduzir a area visivel de QUALQUER porta, janela, corredor ou abertura.
+
+PROIBIDO criar paredes, divisorias, pilares ou qualquer elemento arquitetonico que NAO exista na foto original.`
+
+const PERSPECTIVE_LOCK = `━━━ PERSPECTIVA — REGRA INVIOLAVEL ━━━
+A CAMERA NAO SE MOVE. O ponto de vista, angulo, distancia focal, enquadramento e proporcoes da foto original sao ABSOLUTAMENTE IMUTAVEIS. A linha do horizonte, pontos de fuga e geometria perspectiva devem ser IDENTICOS pixel por pixel. NAO rotacionar, inclinar, dar zoom in/out ou recortar a imagem de forma alguma.`
+
+const STAGING_UNIVERSAL_RULES = `ALINHAMENTO GEOMETRICO — OBRIGATORIO:
+- Todos os moveis devem ser posicionados PARALELOS ou PERPENDICULARES as paredes mais proximas. NUNCA em diagonal.
+- Sofas e camas devem ser colocados encostados em uma parede.
+- Tapetes devem ser alinhados com o eixo principal do comodo.
+- Mesas de centro devem ser centralizadas em relacao ao sofa.
+- Cadeiras devem ser alinhadas com mesas, NUNCA em angulo.
+
+REGRA UNIVERSAL DE POSICIONAMENTO:
+Nenhum movel, tapete, objeto decorativo ou qualquer elemento inserido pode obstruir, bloquear, cobrir parcialmente ou reduzir a passagem de PORTAS, JANELAS, CORREDORES ou qualquer abertura visivel no ambiente.`
 
 // ── Gemini client singleton (@google/genai) ───────────────────────────────────
 
@@ -80,9 +112,13 @@ export function buildGeminiPrompt(job) {
     PROMPT_LIBRARY[job.room_type]?.[job.style] ||
     PROMPT_LIBRARY.living_room.moderno_brasileiro
 
-  if (job.style === 'popular_brasileiro') return rawPrompt
-
-  return STAGING_UNIVERSAL_RULES + '\n\n' + adaptPrompt(rawPrompt, job.room_type)
+  // TODOS os estilos (incluindo popular_brasileiro) passam pelo lock estrutural
+  return (
+    STRUCTURAL_LOCK_DIRECTIVE + '\n\n' +
+    PERSPECTIVE_LOCK + '\n\n' +
+    STAGING_UNIVERSAL_RULES + '\n\n' +
+    (job.style === 'popular_brasileiro' ? rawPrompt : adaptPrompt(rawPrompt, job.room_type))
+  )
 }
 
 function adaptPrompt(existingPrompt, roomType = '') {
@@ -122,10 +158,10 @@ export async function generateWithGemini({ imageBase64, prompt, mimeType = 'imag
   // Verbo imperativo prefixado ao prompt evita que o modelo entre em modo VQA
   // (onde descreve a imagem em vez de transformá-la).
   // Para limpar-baguncca usamos prefixo diferente que enfatiza "não adicionar nada".
-  const isCleanup = prompt === CLEAN_UP_PROMPT
+  const isCleanup = prompt.includes('REMOCAO DE BAGUNCCA') || prompt.includes('PINTURA DE PAREDES')
   const actionPrompt = isCleanup
-    ? `Edit this real estate photo: remove all clutter and mess, then repaint the walls and ceiling with a fresh neutral color as instructed. Follow all rules exactly: ${prompt}`
-    : `Edite esta imagem aplicando o seguinte: ${prompt}`
+    ? `Edit this real estate photo: remove all clutter and mess, then repaint the walls and ceiling with a fresh neutral color as instructed. The output MUST have EXACTLY the same camera angle, perspective, framing, and dimensions as the input. Do NOT add walls or architectural elements that don't exist. Follow all rules exactly:\n\n${prompt}`
+    : `Edit this real estate photo adding furniture. CRITICAL: the output MUST preserve EXACTLY the same camera angle, perspective, framing, room geometry, and all architectural elements (walls, doors, windows, ceiling). Do NOT create walls, partitions, or architectural elements that do not exist in the original photo. Do NOT change the perspective or crop.\n\n${prompt}`
 
   // Detectar aspect ratio real da imagem de entrada (JPEG/PNG/WebP header parse)
   const aspectRatio = detectAspectRatioFromBase64(imageBase64)
