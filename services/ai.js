@@ -112,23 +112,39 @@ export function buildGeminiPrompt(job) {
     PROMPT_LIBRARY[job.room_type]?.[job.style] ||
     PROMPT_LIBRARY.living_room.moderno_brasileiro
 
-  const styledPrompt = job.style === 'popular_brasileiro'
-    ? rawPrompt
-    : adaptPrompt(rawPrompt, job.room_type)
+  // Todos os estilos passam por adaptPrompt — o strip interno remove apenas
+  // o cabeçalho "Hyperrealistic professional photograph of..." que conflita
+  // com a tarefa de editar uma foto real. popular_brasileiro e moderno_brasileiro
+  // no novo formato também começam com esse cabeçalho, portanto são tratados igual.
+  const styledPrompt = adaptPrompt(rawPrompt, job.room_type)
 
   // Estilo PRIMEIRO — modelo ancora no que FAZER antes de ler restrições
   return styledPrompt + '\n\n' + STRUCTURAL_LOCK_DIRECTIVE + '\n\n' + PERSPECTIVE_LOCK + '\n\n' + STAGING_UNIVERSAL_RULES
 }
 
+/**
+ * Remove o cabeçalho "Hyperrealistic professional photograph of a Brazilian X room."
+ * do prompt para evitar conflito com a foto real de entrada.
+ * Preserva integralmente a lista de móveis, materiais e atmosfera.
+ */
+function stripSceneHeader(prompt) {
+  return prompt.replace(/^Hyperrealistic professional photograph of[^.]+\.\s*/, '')
+}
+
 function adaptPrompt(existingPrompt, roomType = '') {
   const detectedRoom =
     roomType ||
-    existingPrompt.match(/\b(kitchen|bedroom|bathroom|living room|dining room|office)\b/i)?.[1] ||
+    existingPrompt.match(/\b(kitchen|bedroom|bathroom|living room|dining room|home office|office)\b/i)?.[1] ||
     'interior space'
+
+  const furnitureContent = stripSceneHeader(existingPrompt)
 
   return (
     `You are adding furniture to a real estate photo. Furnish this empty ${detectedRoom} EXACTLY as described below:\n\n` +
-    `${existingPrompt}\n\n` +
+    `${furnitureContent}\n\n` +
+    `ABSOLUTE PROHIBITIONS — NEVER DO:\n` +
+    `- NEVER create, add or modify windows. Only place curtains or window treatments if a window ALREADY EXISTS and is VISIBLE in the original photo.\n` +
+    `- NEVER add, remove, move or alter any wall, door, window, ceiling, floor, column, arch or any architectural/structural element.\n\n` +
     `OUTPUT: Photorealistic furnished interior photo, same resolution and framing as input. ` +
     `Add ONLY furniture, decor, and staging elements. No text, watermarks, or UI elements.`
   )
