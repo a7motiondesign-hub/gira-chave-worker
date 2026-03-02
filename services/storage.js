@@ -7,6 +7,7 @@
 
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3'
 import { supabase } from '../lib/supabase.js'
+import sharp from 'sharp'
 
 const s3 = new S3Client({
   region: 'auto',
@@ -18,14 +19,17 @@ const s3 = new S3Client({
 })
 
 const R2_PUBLIC_BASE = 'https://pub-58676ec492ce4763bc29c0609e408719.r2.dev'
+const THUMB_WIDTH = 400
+const THUMB_QUALITY = 80
 
 /**
  * Uploads the output image to R2 and returns the permanent public URL.
+ * Also generates a compressed thumbnail (400px WebP).
  *
  * @param {string} jobId
  * @param {string} userId
  * @param {string} outputImageUrl - Can be a data URI (data:image/...) or an HTTPS URL
- * @returns {Promise<string>} permanent R2 URL
+ * @returns {Promise<{permanentUrl: string, thumbnailUrl: string|null}>}
  */
 export async function uploadToR2(jobId, userId, outputImageUrl) {
   let buffer
@@ -38,7 +42,8 @@ export async function uploadToR2(jobId, userId, outputImageUrl) {
     buffer = Buffer.from(await res.arrayBuffer())
   }
 
-  const key = `processed/${userId}/${jobId}_${Date.now()}.webp`
+  const ts = Date.now()
+  const key = `processed/${userId}/${jobId}_${ts}.webp`
 
   await s3.send(new PutObjectCommand({
     Bucket: process.env.R2_BUCKET_NAME,
@@ -47,7 +52,29 @@ export async function uploadToR2(jobId, userId, outputImageUrl) {
     ContentType: 'image/webp',
   }))
 
-  return `${R2_PUBLIC_BASE}/${key}`
+  const permanentUrl = `${R2_PUBLIC_BASE}/${key}`
+
+  // Generate & upload compressed thumbnail
+  let thumbnailUrl = null
+  try {
+    const thumbBuffer = await sharp(buffer)
+      .resize(THUMB_WIDTH, null, { withoutEnlargement: true })
+      .webp({ quality: THUMB_QUALITY })
+      .toBuffer()
+
+    const thumbKey = `processed/${userId}/thumbs/${jobId}_${ts}.webp`
+    await s3.send(new PutObjectCommand({
+      Bucket: process.env.R2_BUCKET_NAME,
+      Key: thumbKey,
+      Body: thumbBuffer,
+      ContentType: 'image/webp',
+    }))
+    thumbnailUrl = `${R2_PUBLIC_BASE}/${thumbKey}`
+  } catch (thumbErr) {
+    console.warn(`[storage] Thumbnail falhou para job ${jobId}:`, thumbErr.message)
+  }
+
+  return { permanentUrl, thumbnailUrl }
 }
 
 /**
@@ -60,21 +87,27 @@ export async function uploadToR2(jobId, userId, outputImageUrl) {
  */
 export async function saveOutputAndComplete(jobId, userId, outputImageUrl) {
   let permanentUrl = outputImageUrl
+  let thumbnailUrl = null
 
   try {
-    permanentUrl = await uploadToR2(jobId, userId, outputImageUrl)
+    const result = await uploadToR2(jobId, userId, outputImageUrl)
+    permanentUrl = result.permanentUrl
+    thumbnailUrl = result.thumbnailUrl
   } catch (err) {
     console.error(`[storage] R2 upload falhou para job ${jobId}:`, err.message)
     // fallback: keep the original URL (data URIs won't persist across restarts, but better than failing)
   }
 
+  const updateData = {
+    status: 'completed',
+    output_image_url: permanentUrl,
+    completed_at: new Date().toISOString(),
+  }
+  if (thumbnailUrl) updateData.thumbnail_url = thumbnailUrl
+
   const { error } = await supabase
     .from('replicate_jobs')
-    .update({
-      status: 'completed',
-      output_image_url: permanentUrl,
-      completed_at: new Date().toISOString(),
-    })
+    .update(updateData)
     .eq('id', jobId)
 
   if (error) {
