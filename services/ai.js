@@ -110,10 +110,16 @@ function adaptPrompt(existingPrompt, roomType = '', options = {}) {
     }
   }
 
+  // ── Wall decor rule ─────────────────────────────────────────────────────
+  const wallDecorEnabled = options.decor !== false
+  const wallDecorRule = wallDecorEnabled
+    ? `WALL DECORATION: On any visible wall with empty space suitable for decor, add wall art appropriate to the style (framed prints, paintings, or mirrors) and/or floating shelves with style-appropriate decorative objects. The choice and quantity of wall decor must feel natural and proportional to the style aesthetic — minimal for minimalist/japandi styles, bold for luxo/art_deco styles, eclectic for boho/colorido styles, simple and affordable for popular styles.`
+    : ''
+
   // ── Curtain rule ────────────────────────────────────────────────────────
   const curtainsEnabled = options.curtains !== false
   const curtainRule = curtainsEnabled
-    ? `If ANY window is visible, add curtains/drapes/sheers matching the style. Window frame and glass stay unaltered.`
+    ? `CURTAINS — REQUIRED: If ANY window is visible in the image, you MUST add window treatments (curtains, drapes, or sheers) appropriate to the staging style. This is mandatory — do not leave windows bare. The window frame and glass must remain unaltered; only add the fabric treatment. Choose the curtain style, material, and color that naturally fits the room's aesthetic.`
     : ''
 
   // ── Surface change logic ────────────────────────────────────────────────
@@ -173,6 +179,7 @@ ${STAGING_UNIVERSAL_RULES}
 
 ${surfaceRules}
 ${curtainRule}
+${wallDecorRule}
 </staging_rules>
 
 ${exclusionItems.length > 0 ? `<exclusions>\n${exclusionItems.join('\n')}\n</exclusions>\n` : ''}
