@@ -195,6 +195,9 @@ ${criticalSurfaceRule}
 <verification>
 - Every door and window from the original is still present, same position, size, and color
 ${surfaceVerificationLines}
+- The horizon line is at the EXACT SAME pixel height as the original photograph
+- All vanishing points and wall/floor/ceiling angles are GEOMETRICALLY IDENTICAL to the original
+- Room proportions and apparent ceiling height are UNCHANGED — no zoom, no scale shift
 - The result is HYPERREALISTIC — indistinguishable from a real professional DSLR photograph
 </verification>`
 
