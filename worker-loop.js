@@ -12,7 +12,7 @@
 
 import pLimit from 'p-limit'
 import { supabase } from './lib/supabase.js'
-import { buildGeminiPrompt, generateWithGemini, generateWithReplicate } from './services/ai.js'
+import { buildGeminiPrompt, generateWithGemini, generateWithReplicate, editSurfaces } from './services/ai.js'
 import { saveOutputAndComplete, markJobFailed, requeueWithBackoff } from './services/storage.js'
 import { notifyJobComplete, notifyJobFailed } from './services/notifications.js'
 import { logAiUsage } from './services/usage-logger.js'
@@ -49,22 +49,64 @@ function isTransientError(msg = '') {
 async function processGeminiJob(job) {
   console.log(`[worker] Gemini job ${job.id} | service=${job.service} | retry=${job.retry_count}`)
 
+  // ── 🔍 DEBUG: dump completo dos campos do job ─────────────────────────
+  console.log(`[worker:debug] JOB FIELDS:
+    id         = ${job.id}
+    service    = ${JSON.stringify(job.service)}
+    room_type  = ${JSON.stringify(job.room_type)}
+    style      = ${JSON.stringify(job.style)}
+    options    = ${JSON.stringify(job.options)}
+    type(options) = ${typeof job.options}`)
+
   const imageRes = await fetch(job.input_image_url)
   if (!imageRes.ok) throw new Error(`Falha ao baixar imagem: HTTP ${imageRes.status}`)
-  const imageBase64 = Buffer.from(await imageRes.arrayBuffer()).toString('base64')
+  let imageBase64 = Buffer.from(await imageRes.arrayBuffer()).toString('base64')
 
+  const opts = job.options || {}
+  const needsSurfaceEdit = !!(opts.wallPaint || opts.floorChange)
+
+  // ── 🔍 DEBUG: avaliação do needsSurfaceEdit ────────────────────────────
+  console.log(`[worker:debug] SURFACE EVAL:
+    opts.wallPaint   = ${JSON.stringify(opts.wallPaint)}  → truthy=${!!opts.wallPaint}
+    opts.floorChange = ${JSON.stringify(opts.floorChange)}  → truthy=${!!opts.floorChange}
+    needsSurfaceEdit = ${needsSurfaceEdit}
+    job.service === 'virtual-staging' = ${job.service === 'virtual-staging'}
+    → Pass 1 will run = ${needsSurfaceEdit && job.service === 'virtual-staging'}`)
+
+  // ── Pass 1: Surface editing via Imagen editImage API (if requested) ────
+  if (needsSurfaceEdit && job.service === 'virtual-staging') {
+    console.log(`[worker] Pass 1: editSurfaces | wall=${opts.wallPaint || 'none'} | floor=${opts.floorChange || 'none'}`)
+    const surfaceResult = await editSurfaces({
+      imageBase64,
+      wallPaint: opts.wallPaint || null,
+      floorChange: opts.floorChange || null,
+    })
+
+    if (!surfaceResult.success) {
+      console.warn(`[worker] ⚠️ Surface edit FAILED: ${surfaceResult.error}`)
+    } else {
+      imageBase64 = surfaceResult.imageBase64
+      console.log(`[worker] ✅ Pass 1 complete — surfaces applied`)
+    }
+  } else {
+    console.log(`[worker:debug] Pass 1 SKIPPED — needsSurfaceEdit=${needsSurfaceEdit} service=${job.service}`)
+  }
+
+  // ── Pass 2: Staging / cleanup via Gemini generateContent ───────────────
   const prompt = buildGeminiPrompt(job)
+
+  // ── 🔍 DEBUG: prompt gerado ────────────────────────────────────────────
+  console.log(`[worker:debug] PROMPT BUILT (primeiros 300 chars):\n${prompt.substring(0, 300)}...`)
 
   const vsStart = Date.now()
   const result = await generateWithGemini({ imageBase64, prompt })
   const vsDurationMs = Date.now() - vsStart
 
   // Log AI usage (fire-and-forget)
-  // Usa result.modelId — o modelo REAL após override do model guard — não o env var
   logAiUsage({
     userId: job.user_id,
     sessionId: job.id,
-    model: result.modelId || 'gemini-3.1-flash-image-preview',
+    model: process.env.VS_MODEL_ID || 'gemini-3.1-pro-preview',
     feature: job.service === 'limpar-baguncca' ? 'limpar_baguncca' : 'virtual_staging',
     usageMetadata: result.usageMetadata,
     durationMs: vsDurationMs,
@@ -103,7 +145,8 @@ async function processReplicateJob(job) {
   if (!imageRes.ok) throw new Error(`Falha ao baixar imagem: HTTP ${imageRes.status}`)
   const imageBase64 = Buffer.from(await imageRes.arrayBuffer()).toString('base64')
 
-  const result = await generateWithReplicate({ imageBase64 })
+  const ftLevel = job.options?.level || 2
+  const result = await generateWithReplicate({ imageBase64, level: ftLevel })
 
   if (!result.success) {
     const err = new Error(result.error || 'Replicate falhou')

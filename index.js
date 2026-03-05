@@ -32,6 +32,15 @@ const PORT = process.env.PORT || 3001
 const app = express()
 
 // ── Health check endpoint ─────────────────────────────────────────────────────
+app.get('/', (_req, res) => {
+  res.json({
+    status: 'ok',
+    service: 'gira-chave-worker',
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+  })
+})
+
 app.get('/health', (_req, res) => {
   res.json({
     status: 'ok',
