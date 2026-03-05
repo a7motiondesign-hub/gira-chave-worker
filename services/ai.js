@@ -226,13 +226,22 @@ Use the style reference ONLY to select appropriate furniture styles, fabric colo
   ].filter(Boolean).join('\n')
 
   // ── Assemble prompt using XML semantic tags ─────────────────────────────
+  const taskDescription = hasSurfaceChange
+    ? `You must complete TWO simultaneous tasks on the provided real estate photo:
+TASK 1 — STAGE THE ROOM (PRIMARY): Furnish this empty ${detectedRoom} with furniture, decor, and accessories in the specified style. This is the MOST IMPORTANT task. An output with NO furniture is completely unacceptable.
+TASK 2 — MODIFY SURFACES (SECONDARY): Apply the specified wall and/or floor changes described in <staging_rules>. These changes MUST be visible in the output BUT must not prevent or interfere with the staging.
+OUTPUT: Hyperrealistic fully-furnished interior photo with all specified surface changes applied. Same resolution and framing as input.`
+    : `Edit and return the provided real estate photo with professional virtual staging applied — furnishing an empty or unfurnished ${detectedRoom}.
+OUTPUT: Hyperrealistic furnished interior photo, same resolution and framing as input.`
+
+  const furnitureVerificationLine = `- THE ROOM IS FURNISHED: appropriate ${detectedRoom} furniture is present (the room must NOT be empty)`
+
   const prompt = `<system_directive>
 ${structuralLock}
 </system_directive>
 
 <task>
-Edit and return the provided real estate photo with professional virtual staging applied — furnishing an empty or unfurnished ${detectedRoom}.
-OUTPUT: Hyperrealistic furnished interior photo, same resolution and framing as input.
+${taskDescription}
 </task>
 
 <staging_style>
@@ -255,9 +264,11 @@ ${criticalSurfaceRule}
 - Add ONLY furniture, decor, and staging elements consistent with the style reference
 - Ensure HYPERREALISTIC rendering indistinguishable from a real photograph
 - No text, watermarks, or UI elements
+${hasSurfaceChange ? '- FURNITURE IS MANDATORY: do NOT return the image with surface changes only and no furniture' : ''}
 </critical_rules>
 
 <verification>
+${furnitureVerificationLine}
 - Every door and window from the original is still present, same position, size, and color
 ${surfaceVerificationLines}
 - The horizon line is at the EXACT SAME pixel height as the original photograph
