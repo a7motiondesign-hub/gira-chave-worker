@@ -292,7 +292,7 @@ export async function generateWithGemini({ imageBase64, prompt, referenceImageBa
   const aspectRatio = detectAspectRatioFromBase64(imageBase64)
 
   try {
-    const parts = [
+    const requestParts = [
       { text: prompt },
       { inlineData: { data: imageBase64, mimeType: 'image/jpeg' } },
     ]
@@ -301,7 +301,7 @@ export async function generateWithGemini({ imageBase64, prompt, referenceImageBa
       const refData = referenceImageBase64.startsWith('data:')
         ? referenceImageBase64.split(',')[1]
         : referenceImageBase64
-      parts.push({ inlineData: { data: refData, mimeType: 'image/jpeg' } })
+      requestParts.push({ inlineData: { data: refData, mimeType: 'image/jpeg' } })
       console.log(`[ai] Reference image included (${refData.length} base64 chars)`)
     }
 
@@ -309,7 +309,7 @@ export async function generateWithGemini({ imageBase64, prompt, referenceImageBa
       model: modelId,
       contents: [
         {
-          parts,
+          parts: requestParts,
         },
       ],
       config: {
