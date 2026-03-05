@@ -192,15 +192,33 @@ export async function notifyJobComplete({ userId, service, jobId, roomType, styl
     { service_type: serviceType, job_id: jobId }
   )
 
-  // 2. Email + Telegram founder alert
+  // 2. Telegram founder alert — always fires first, independently of everything
+  try {
+    const now = new Date()
+    const date = now.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })
+    const time = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' })
+    const roomLine = roomType ? `\n🚪 *Cômodo:* ${roomType}` : ''
+    const styleLine = style ? `\n🎨 *Estilo:* ${style}` : ''
+
+    await sendTelegramAlert(
+      `✅ *GiraChavePro*\n👤 ${userId}\n` +
+      `✅ Processamento concluído\n━━━━━━━━━━━━━━━\n` +
+      `🔧 *Serviço:* ${label}` + roomLine + styleLine +
+      `\n💳 *Créditos usados:* ${creditsUsed ?? '?'}` +
+      `\n📅 *Data:* ${date} às ${time}`
+    )
+  } catch (err) {
+    console.error('[notifications] Telegram error:', err.message)
+  }
+
+  // 3. Email (fetch profile for name/email)
   try {
     const { data: profile } = await supabase
       .from('profiles')
-      .select('email, full_name, email_notifications, credits')
+      .select('email, full_name, email_notifications')
       .eq('id', userId)
       .single()
 
-    // Email (only if user has email notifications enabled)
     if (profile?.email && profile.email_notifications !== false) {
       const name = profile.full_name || profile.email.split('@')[0]
       await sendEmail(
@@ -209,22 +227,6 @@ export async function notifyJobComplete({ userId, service, jobId, roomType, styl
         jobReadyEmailHtml(name, label, galleryUrl)
       )
     }
-
-    // 3. Telegram founder alert — always send regardless of email preference
-    const now = new Date()
-    const date = now.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })
-    const time = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' })
-    const roomLine = roomType ? `\n🚪 *Cômodo:* ${roomType}` : ''
-    const styleLine = style ? `\n🎨 *Estilo:* ${style}` : ''
-
-    await sendTelegramAlert(
-      `✅ *GiraChavePro*\n👤 ${profile?.email ?? userId}\n` +
-      `✅ Processamento concluído\n━━━━━━━━━━━━━━━\n` +
-      `🔧 *Serviço:* ${label}` + roomLine + styleLine +
-      `\n💳 *Créditos usados:* ${creditsUsed ?? '?'}` +
-      `\n💰 *Saldo restante:* ${profile?.credits ?? '?'}` +
-      `\n📅 *Data:* ${date} às ${time}`
-    )
   } catch (err) {
     console.error('[notifications] Erro ao buscar perfil para email:', err.message)
   }

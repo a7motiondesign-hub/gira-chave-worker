@@ -133,7 +133,7 @@ async function processGeminiJob(job) {
     roomType: job.room_type,
     style: job.style,
     creditsUsed: job.credits_used,
-  }).catch(() => {})
+  }).catch(err => console.error('[worker] notifyJobComplete error:', err.message))
 
   console.log(`[worker] ✅ Gemini job ${job.id} concluído (${vsDurationMs}ms)`)
 }
@@ -161,7 +161,7 @@ async function processReplicateJob(job) {
     service: job.service,
     jobId: job.id,
     creditsUsed: job.credits_used,
-  }).catch(() => {})
+  }).catch(err => console.error('[worker] notifyJobComplete error:', err.message))
 
   console.log(`[worker] ✅ Replicate job ${job.id} concluído`)
 }
