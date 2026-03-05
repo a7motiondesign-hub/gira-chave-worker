@@ -50,6 +50,11 @@ function getGeminiClient() {
  * @returns {string}
  */
 export function buildGeminiPrompt(job) {
+  // Reference-photo mode: build from the reference image instead of a style preset
+  if (job.service === 'virtual-staging' && job.options?.referenceImageUrl) {
+    return buildReferencePrompt(job.room_type, job.options || {})
+  }
+
   if (job.service === 'limpar-baguncca') {
     const opts = job.options || {}
     const level = opts.level || 1
@@ -83,6 +88,66 @@ export function buildGeminiPrompt(job) {
   // All styles now go through the unified adaptPrompt with structural lock + modular options
   const opts = job.options || {}
   return adaptPrompt(rawPrompt, job.room_type, opts)
+}
+
+/**
+ * Builds a prompt for reference-photo virtual staging.
+ * The worker will send IMAGE 1 (property) and IMAGE 2 (reference) to Gemini.
+ *
+ * @param {string} roomType
+ * @param {Object} opts
+ * @returns {string}
+ */
+function buildReferencePrompt(roomType, opts = {}) {
+  const detectedRoom = roomType || 'interior space'
+  const structuralLock = buildStructuralLock({
+    preserveWalls: !opts.wallPaint,
+    preserveFloors: !opts.floorChange,
+  })
+  const curtainRule = opts.curtains !== false
+    ? 'CURTAINS — REQUIRED: replicate the curtain style, material and color from IMAGE 2.'
+    : 'WINDOW TREATMENT EXCLUSION: Do NOT add any curtains or window treatments.'
+
+  return `<system_directive>
+${structuralLock}
+</system_directive>
+<task>
+You will receive TWO images:
+- IMAGE 1 (first image): The property photograph to be virtually staged — an empty or minimally furnished ${detectedRoom}.
+- IMAGE 2 (second image): A style reference photograph showing the desired interior design aesthetic.
+
+Your task: Stage IMAGE 1 by faithfully replicating the style, atmosphere, furniture types, materials, color palette, curtains, rugs, lighting, and decorative approach visible in IMAGE 2 — applied naturally to the architecture and layout of IMAGE 1.
+OUTPUT: Hyperrealistic staged interior photo, same resolution and framing as IMAGE 1.
+</task>
+<reference_extraction>
+From IMAGE 2, extract and apply to IMAGE 1:
+- Furniture style, shapes, proportions, and materials
+- Overall color palette (wall color if not explicitly locked, upholstery, wood tones, metals)
+- Curtain style, material, and color
+- Rug type, pattern, and placement
+- Lighting fixtures design and placement
+- Wall decor (art, mirrors, shelves) style and density
+- Plant types and placement
+- Overall atmosphere and mood
+Apply all of the above to IMAGE 1, strictly respecting its architectural layout.
+</reference_extraction>
+<staging_rules>
+${STAGING_UNIVERSAL_RULES}
+SURFACE PRESERVATION: ALL existing wall surfaces, floor materials, and ceiling finishes of IMAGE 1 MUST remain unchanged unless surface override options specify otherwise.
+${curtainRule}
+</staging_rules>
+<critical_rules>
+- THE CAMERA DOES NOT MOVE: IMAGE 1 viewpoint, angle, and framing are IMMUTABLE.
+- All furniture must be placed PARALLEL or PERPENDICULAR to the walls of IMAGE 1, NEVER diagonally.
+- Respect the actual dimensions of IMAGE 1’s space — do not invent space that is not present.
+- HYPERREALISTIC rendering, indistinguishable from a real DSLR photograph.
+</critical_rules>
+<verification>
+• IMAGE 1 architecture (doors, windows, walls, floor, ceiling) is PIXEL-PERFECT preserved.
+• The style, colors, and atmosphere closely match IMAGE 2.
+• Perspective geometry of IMAGE 1 is completely unchanged.
+• Result is HYPERREALISTIC, not CGI-looking.
+</verification>`
 }
 
 /**
@@ -213,7 +278,7 @@ ${surfaceVerificationLines}
  * @param {{ imageBase64: string, prompt: string }} params
  * @returns {Promise<{ success: boolean, imageBase64?: string, mimeType?: string, usageMetadata?: object, error?: string }>}
  */
-export async function generateWithGemini({ imageBase64, prompt }) {
+export async function generateWithGemini({ imageBase64, prompt, referenceImageBase64 = null }) {
   const client = getGeminiClient()
 
   // Model override: pro models return NO_IMAGE — force flash
@@ -227,15 +292,24 @@ export async function generateWithGemini({ imageBase64, prompt }) {
   const aspectRatio = detectAspectRatioFromBase64(imageBase64)
 
   try {
+    const parts = [
+      { text: prompt },
+      { inlineData: { data: imageBase64, mimeType: 'image/jpeg' } },
+    ]
+    if (referenceImageBase64) {
+      // Accept either raw base64 OR a data URI (strip the header)
+      const refData = referenceImageBase64.startsWith('data:')
+        ? referenceImageBase64.split(',')[1]
+        : referenceImageBase64
+      parts.push({ inlineData: { data: refData, mimeType: 'image/jpeg' } })
+      console.log(`[ai] Reference image included (${refData.length} base64 chars)`)
+    }
+
     const response = await client.models.generateContent({
       model: modelId,
       contents: [
         {
-          parts: [
-            // Text FIRST, then image — matches the Next.js route order
-            { text: prompt },
-            { inlineData: { data: imageBase64, mimeType: 'image/jpeg' } },
-          ],
+          parts,
         },
       ],
       config: {

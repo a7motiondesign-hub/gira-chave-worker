@@ -98,8 +98,25 @@ async function processGeminiJob(job) {
   // ── 🔍 DEBUG: prompt gerado ────────────────────────────────────────────
   console.log(`[worker:debug] PROMPT BUILT (primeiros 300 chars):\n${prompt.substring(0, 300)}...`)
 
+  // Extract reference image if user uploaded one (stored as base64 data URI in options)
+  let referenceImageBase64 = null
+  if (opts.referenceImageUrl) {
+    if (opts.referenceImageUrl.startsWith('data:')) {
+      referenceImageBase64 = opts.referenceImageUrl.split(',')[1]
+      console.log(`[worker] Reference image from data URI (${referenceImageBase64.length} chars)`)
+    } else {
+      const refRes = await fetch(opts.referenceImageUrl)
+      if (refRes.ok) {
+        referenceImageBase64 = Buffer.from(await refRes.arrayBuffer()).toString('base64')
+        console.log(`[worker] Reference image downloaded from URL`)
+      } else {
+        console.warn(`[worker] ⚠️ Could not fetch reference image: HTTP ${refRes.status}`)
+      }
+    }
+  }
+
   const vsStart = Date.now()
-  const result = await generateWithGemini({ imageBase64, prompt })
+  const result = await generateWithGemini({ imageBase64, prompt, referenceImageBase64 })
   const vsDurationMs = Date.now() - vsStart
 
   // Log AI usage (fire-and-forget)
