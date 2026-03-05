@@ -4,100 +4,37 @@
  * Wrappers for Gemini (virtual-staging, limpar-baguncca) and
  * Replicate (foto-revista) calls.
  *
- * Uses the NEW @google/genai SDK with responseModalities: ['TEXT','IMAGE']
- * which is REQUIRED for Gemini image generation models.
+ * Uses the NEW @google/genai SDK (same as lib/google-ai-image-client.js)
+ * which supports responseModalities: ['IMAGE'] and imageConfig.
  */
 
 import { GoogleGenAI } from '@google/genai'
 import Replicate from 'replicate'
 import { PROMPT_LIBRARY } from '../lib/prompts.js'
+import {
+  CLEAN_UP_LEVEL_1,
+  buildCleanUpLevel2,
+  buildCleanUpLevel3,
+  STRUCTURAL_LOCK_DIRECTIVE,
+  buildStructuralLock,
+  STAGING_UNIVERSAL_RULES,
+  STAGING_EXCLUSIONS,
+  FOTO_TURBINADA_LEVELS,
+  buildStagingWallPaintOverride,
+  buildStagingFloorOverride,
+} from '../lib/prompt-constants.js'
+import { editSurfaces } from '../lib/google-ai-image-client.js'
+export { editSurfaces }
 import { detectAspectRatioFromBase64 } from '../lib/image-utils.js'
 
-// ── Constants ─────────────────────────────────────────────────────────────────
-
-const CLEAN_UP_PROMPT = `You are a professional real estate photo editor. Your task has two parts: (1) digitally REMOVE clutter and mess, and (2) apply a fresh coat of paint to walls and ceiling as described below.
-
-━━━ GEOMETRIA — BLOQUEADA ABSOLUTAMENTE ━━━
-A imagem de saida DEVE ter:
-- Exactamente a mesma proporcao (aspect ratio) da imagem de entrada.
-- Exactamente o mesmo angulo de camera, zoom, campo visual (FOV) e perspectiva.
-- Nenhum recorte, ampliacao, rotacao ou mudanca de enquadramento.
-Se voce alterar o enquadramento de qualquer forma, a tarefa falhou.
-
-━━━ PINTURA DE PAREDES E TETO — OBRIGATORIA ━━━
-Aplique pintura nova e uniforme nas paredes e no teto do recinto:
-- TETO: branco puro (warm white), sem textura aparente, aspecto de tinta latex recém-aplicada.
-- PAREDES: escolha automaticamente a cor neutra mais adequada ao ambiente entre as tres opcoes abaixo, priorizando harmonia com o piso e mobiliario existente:
-  a) Branco off-white (tom ligeiramente quente, ex: #F5F0E8)
-  b) Palha / areia clara (tom bege suave, ex: #EDE0C4)
-  c) Pessego claro (tom rosado suave, ex: #F2D9C8)
-- A pintura deve cobrir uniformemente toda a extensao de cada parede visivel, inclusive em torno de portas, janelas, rodapes e quinas.
-- Mantenha interruptores, tomadas, rodapes, portas, janelas e qualquer elemento fixo NO MESMO LUGAR e formato — apenas a cor da parede/teto muda.
-- A aparencia final deve ser fotorrealista, como se o ambiente tivesse sido pintado por um profissional.
-
-━━━ REMOCAO DE BAGUNCCA — OBRIGATORIA ━━━
-Remova todos os objetos transientes, pessoais e de consumo fora do lugar:
-- Cozinhas: louças sujas, panelas, panos, detergentes, alimentos, sacolas.
-- Banheiros: toalhas usadas, produtos de higiene, lixo, tapetes amassados.
-- Quartos: roupas, sapatos, bolsas, cabides soltos, malas.
-- Salas/Escritorios: papeis, cabos, eletronicos pessoais, caixas, embalagens.
-- Geral: entulho, materiais de construcao soltos, lixo de qualquer tipo.
-
-━━━ PRESERVACAO DO PISO ━━━
-- O piso deve manter seu material, cor, textura e padrao IDENTICOS ao original.
-- Se houver sujeira, remova apenas a sujeira superficial SEM alterar o material subjacente.
-
-━━━ O QUE NUNCA TOCAR ━━━
-- Moveis grandes (sofas, camas, mesas, estantes, geladeira, fogao): permanecem no lugar EXATO.
-- Decoracao fixa (quadros na parede, vasos grandes, plantas permanentes): permanecem.
-- Luminarias, spots e instalacoes fixas: permanecem no lugar exato.
-- Iluminacao natural: mantenha as condicoes exatas de luz, sombra e reflexos.
-- PROIBIDO adicionar qualquer mobiliario, tapete, planta ou objeto decorativo novo.
-
-Resultado esperado: A mesma fotografia da entrada, mesmo enquadramento e proporcao, mostrando o ambiente limpo, organizado e com paredes e teto recém-pintados em tom neutro claro.`
-
-const STRUCTURAL_LOCK_DIRECTIVE = `━━━ PRIORIDADE ZERO — BLOQUEIO ESTRUTURAL ABSOLUTO E INVIOLAVEL ━━━
-Todos os elementos arquitetonicos e estruturais da fotografia original DEVEM permanecer PIXEL-PERFECT e COMPLETAMENTE INALTERADOS. Esta regra SOBRESCREVE todas as outras instrucoes sem excecao.
-
-RESOLUCAO E DIMENSOES:
-A imagem de saida DEVE preservar EXATAMENTE a mesma resolucao, dimensoes e aspect ratio da fotografia de entrada. NAO recortar, preencher, redimensionar, letterbox ou alterar as dimensoes em pixel de forma alguma.
-
-ELEMENTOS QUE NUNCA DEVEM SER ALTERADOS, REMOVIDOS, MOVIDOS, REDIMENSIONADOS, RECOLORIDOS OU OBSTRUIDOS:
-- PORTAS: paineis, batentes, macanetas, dobradicas, fechaduras, soleiras, molduras
-- JANELAS: caixilhos, vidros, peitoris, grades, persianas, trilhos
-- PAREDES: superficie, cor de tinta, textura, rodapes, molduras de gesso, tomadas, interruptores
-- PISOS: material, cor, padrao, textura, transicoes
-- TETO: superficie, altura, spots, ventiladores, molduras, vigas
-- ABERTURAS: corredores, arcos, passagens — TODOS devem permanecer totalmente visiveis e desobstruidos
-- INSTALACOES FIXAS: armarios embutidos, bancadas fixas, ar condicionado, aquecedores
-
-VERIFICACAO OBRIGATORIA ANTES DO OUTPUT:
-Conte cada porta e janela visivel na imagem original. O output DEVE ter o MESMO numero de portas e janelas, nas MESMAS posicoes, com as MESMAS dimensoes. Se QUALQUER porta ou janela estiver faltando, alterada ou parcialmente escondida — o output e INVALIDO.
-
-NENHUM movel, tapete, cortina, planta ou objeto decorativo pode bloquear, cobrir ou reduzir a area visivel de QUALQUER porta, janela, corredor ou abertura.
-
-PROIBIDO criar paredes, divisorias, pilares ou qualquer elemento arquitetonico que NAO exista na foto original.`
-
-const PERSPECTIVE_LOCK = `━━━ PERSPECTIVA — REGRA INVIOLAVEL ━━━
-A CAMERA NAO SE MOVE. O ponto de vista, angulo, distancia focal, enquadramento e proporcoes da foto original sao ABSOLUTAMENTE IMUTAVEIS. A linha do horizonte, pontos de fuga e geometria perspectiva devem ser IDENTICOS pixel por pixel. NAO rotacionar, inclinar, dar zoom in/out ou recortar a imagem de forma alguma.`
-
-const STAGING_UNIVERSAL_RULES = `ALINHAMENTO GEOMETRICO — OBRIGATORIO:
-- Todos os moveis devem ser posicionados PARALELOS ou PERPENDICULARES as paredes mais proximas. NUNCA em diagonal.
-- Sofas e camas devem ser colocados encostados em uma parede.
-- Tapetes devem ser alinhados com o eixo principal do comodo.
-- Mesas de centro devem ser centralizadas em relacao ao sofa.
-- Cadeiras devem ser alinhadas com mesas, NUNCA em angulo.
-
-REGRA UNIVERSAL DE POSICIONAMENTO:
-Nenhum movel, tapete, objeto decorativo ou qualquer elemento inserido pode obstruir, bloquear, cobrir parcialmente ou reduzir a passagem de PORTAS, JANELAS, CORREDORES ou qualquer abertura visivel no ambiente.`
-
-// ── Gemini client singleton (@google/genai) ───────────────────────────────────
+// ── Gemini client (singleton) ─────────────────────────────────────────────────
 
 let _client = null
-function getClient() {
+
+function getGeminiClient() {
   if (!_client) {
     const apiKey = process.env.GOOGLE_VS_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY
-    if (!apiKey) throw new Error('[ai] GOOGLE_VS_API_KEY not configured')
+    if (!apiKey) throw new Error('[ai] GOOGLE_VS_API_KEY não configurada')
     _client = new GoogleGenAI({ apiKey })
   }
   return _client
@@ -105,76 +42,179 @@ function getClient() {
 
 // ── Prompt builder ────────────────────────────────────────────────────────────
 
+/**
+ * Builds the final Gemini prompt for a given job.
+ * Mirrors the logic inside processGeminiJob() in process-queue/route.js.
+ *
+ * @param {{ service: string, room_type: string, style: string }} job
+ * @returns {string}
+ */
 export function buildGeminiPrompt(job) {
-  if (job.service === 'limpar-baguncca') return CLEAN_UP_PROMPT
+  if (job.service === 'limpar-baguncca') {
+    const opts = job.options || {}
+    const level = opts.level || 1
+
+    if (level === 3) {
+      return buildCleanUpLevel3(opts.wallColor || 'Branco Neve', opts.floorType || 'Porcelanato Claro')
+    }
+    if (level === 2) {
+      return buildCleanUpLevel2(opts.wallColor || 'Branco Neve')
+    }
+    // Level 1 (default)
+    return CLEAN_UP_LEVEL_1
+  }
+
+  const availableRooms = Object.keys(PROMPT_LIBRARY)
+  const availableStyles = PROMPT_LIBRARY[job.room_type] ? Object.keys(PROMPT_LIBRARY[job.room_type]) : []
+  const roomHit = !!PROMPT_LIBRARY[job.room_type]
+  const styleHit = !!(PROMPT_LIBRARY[job.room_type]?.[job.style])
+
+  console.log(`[ai:debug] PROMPT LOOKUP:
+    job.room_type = ${JSON.stringify(job.room_type)}  → encontrado=${roomHit}
+    job.style     = ${JSON.stringify(job.style)}  → encontrado=${styleHit}
+    salas disponíveis  = [${availableRooms.join(', ')}]
+    estilos disponíveis (${job.room_type}) = [${availableStyles.join(', ')}]
+    → usando fallback = ${!styleHit}`)
 
   const rawPrompt =
     PROMPT_LIBRARY[job.room_type]?.[job.style] ||
     PROMPT_LIBRARY.living_room.moderno_brasileiro
 
-  // Todos os estilos passam por adaptPrompt — o strip interno remove apenas
-  // o cabeçalho "Hyperrealistic professional photograph of..." que conflita
-  // com a tarefa de editar uma foto real. popular_brasileiro e moderno_brasileiro
-  // no novo formato também começam com esse cabeçalho, portanto são tratados igual.
-  const styledPrompt = adaptPrompt(rawPrompt, job.room_type)
-
-  // Estilo PRIMEIRO — modelo ancora no que FAZER antes de ler restrições
-  return styledPrompt + '\n\n' + STRUCTURAL_LOCK_DIRECTIVE + '\n\n' + PERSPECTIVE_LOCK + '\n\n' + STAGING_UNIVERSAL_RULES
+  // All styles now go through the unified adaptPrompt with structural lock + modular options
+  const opts = job.options || {}
+  return adaptPrompt(rawPrompt, job.room_type, opts)
 }
 
 /**
- * Remove o cabeçalho "Hyperrealistic professional photograph of a Brazilian X room."
- * do prompt para evitar conflito com a foto real de entrada.
- * Preserva integralmente a lista de móveis, materiais e atmosfera.
+ * Adapts a prompt for Gemini image output using XML semantic tags.
+ *
+ * Surface changes (wall paint, floor) are handled separately via editSurfaces()
+ * in a two-pass pipeline, so this function ALWAYS protects walls/floors.
+ *
+ * @param {string} existingPrompt
+ * @param {string} roomType
+ * @param {Object} options
+ * @returns {string}
  */
-function stripSceneHeader(prompt) {
-  return prompt.replace(/^Hyperrealistic professional photograph of[^.]+\.\s*/, '')
-}
-
-function adaptPrompt(existingPrompt, roomType = '') {
+function adaptPrompt(existingPrompt, roomType = '', options = {}) {
   const detectedRoom =
     roomType ||
-    existingPrompt.match(/\b(kitchen|bedroom|bathroom|living room|dining room|home office|office)\b/i)?.[1] ||
+    existingPrompt.match(/\b(kitchen|bedroom|bathroom|living room|dining room|office)\b/i)?.[1] ||
     'interior space'
 
-  const furnitureContent = stripSceneHeader(existingPrompt)
+  // ── Build modular exclusions based on user toggles ──────────────────────
+  const exclusionItems = []
+  for (const [key, instruction] of Object.entries(STAGING_EXCLUSIONS)) {
+    if (options[key] === false) {
+      exclusionItems.push(instruction)
+    }
+  }
 
-  return (
-    `You are adding furniture to a real estate photo. Furnish this empty ${detectedRoom} EXACTLY as described below:\n\n` +
-    `${furnitureContent}\n\n` +
-    `ABSOLUTE PROHIBITIONS — NEVER DO:\n` +
-    `- NEVER create, add or modify windows. Only place curtains or window treatments if a window ALREADY EXISTS and is VISIBLE in the original photo.\n` +
-    `- NEVER add, remove, move or alter any wall, door, window, ceiling, floor, column, arch or any architectural/structural element.\n\n` +
-    `OUTPUT: Photorealistic furnished interior photo, same resolution and framing as input. ` +
-    `Add ONLY furniture, decor, and staging elements. No text, watermarks, or UI elements.`
-  )
+  // ── Curtain rule ────────────────────────────────────────────────────────
+  const curtainsEnabled = options.curtains !== false
+  const curtainRule = curtainsEnabled
+    ? `If ANY window is visible, add curtains/drapes/sheers matching the style. Window frame and glass stay unaltered.`
+    : ''
+
+  // ── Surface change logic ────────────────────────────────────────────────
+  // When wallPaint / floorChange are set:
+  //   1. Build a structural lock WITHOUT wall/floor protection — so Gemini
+  //      won't block changes via PRIORITY ZERO.
+  //   2. Inject override rules via buildStagingWallPaintOverride / buildStagingFloorOverride.
+  // This acts as both FALLBACK (if editSurfaces/Vertex AI fails) and REINFORCEMENT
+  // (ensures Gemini keeps the already-modified surfaces from Pass 1).
+  const hasSurfaceChange = !!(options.wallPaint || options.floorChange)
+
+  const structuralLock = hasSurfaceChange
+    ? buildStructuralLock({
+        preserveWalls:  !options.wallPaint,
+        preserveFloors: !options.floorChange,
+      })
+    : STRUCTURAL_LOCK_DIRECTIVE
+
+  const surfaceRules = hasSurfaceChange
+    ? [
+        options.wallPaint  ? buildStagingWallPaintOverride(options.wallPaint)  : null,
+        options.floorChange ? buildStagingFloorOverride(options.floorChange)   : null,
+      ].filter(Boolean).join('\n\n')
+    : `SURFACE PRESERVATION — ABSOLUTE RULE:
+The STYLE REFERENCE describes the AESTHETIC of furniture and decorative objects ONLY.
+ALL existing wall surfaces, paint colors, wall textures, wall tiles, floor materials, ceiling finishes, and architectural features (doorways, arches, corridors) in the original photograph MUST remain PIXEL-PERFECT and UNCHANGED.
+Use the style reference ONLY to select appropriate furniture styles, fabric colors, wood tones, and decorative objects.`
+
+  const criticalSurfaceRule = hasSurfaceChange
+    ? `- Apply the specified surface changes (${
+        [options.wallPaint && `walls: "${options.wallPaint}"`, options.floorChange && `floor: "${options.floorChange}"`]
+          .filter(Boolean).join(', ')
+      }); ALL other architectural elements remain PIXEL-PERFECT`
+    : `- Preserve ALL architectural elements exactly (walls, floors, ceiling, windows, doors)`
+
+  const surfaceVerificationLines = [
+    options.wallPaint  ? `- ALL visible wall surfaces are uniformly repainted with "${options.wallPaint}"` : null,
+    options.floorChange ? `- The floor has been replaced with "${options.floorChange}" with realistic texture and perspective` : null,
+  ].filter(Boolean).join('\n')
+
+  // ── Assemble prompt using XML semantic tags ─────────────────────────────
+  const prompt = `<system_directive>
+${structuralLock}
+</system_directive>
+
+<task>
+Edit and return the provided real estate photo with professional virtual staging applied — furnishing an empty or unfurnished ${detectedRoom}.
+OUTPUT: Hyperrealistic furnished interior photo, same resolution and framing as input.
+</task>
+
+<staging_style>
+${existingPrompt}
+</staging_style>
+
+<staging_rules>
+${STAGING_UNIVERSAL_RULES}
+
+${surfaceRules}
+${curtainRule}
+</staging_rules>
+
+${exclusionItems.length > 0 ? `<exclusions>\n${exclusionItems.join('\n')}\n</exclusions>\n` : ''}
+<critical_rules>
+${criticalSurfaceRule}
+- THE CAMERA DOES NOT MOVE: viewpoint, angle, framing, and proportions are IMMUTABLE
+- ALIGNMENT: all furniture PARALLEL or PERPENDICULAR to walls, NEVER diagonal
+- Add ONLY furniture, decor, and staging elements consistent with the style reference
+- Ensure HYPERREALISTIC rendering indistinguishable from a real photograph
+- No text, watermarks, or UI elements
+</critical_rules>
+
+<verification>
+- Every door and window from the original is still present, same position, size, and color
+${surfaceVerificationLines}
+- The result is HYPERREALISTIC — indistinguishable from a real professional DSLR photograph
+</verification>`
+
+  return prompt
 }
 
 // ── Gemini image generation ───────────────────────────────────────────────────
 
-export async function generateWithGemini({ imageBase64, prompt, mimeType = 'image/jpeg' }) {
-  const client = getClient()
+/**
+ * Calls Gemini to generate a virtual staging or clean-up image.
+ * Uses the NEW @google/genai SDK with responseModalities: ['IMAGE'] and imageConfig.
+ *
+ * @param {{ imageBase64: string, prompt: string }} params
+ * @returns {Promise<{ success: boolean, imageBase64?: string, mimeType?: string, usageMetadata?: object, error?: string }>}
+ */
+export async function generateWithGemini({ imageBase64, prompt }) {
+  const client = getGeminiClient()
 
-  // Proteção de modelo: modelos "pro" são texto-only e retornam finishReason: "NO_IMAGE".
-  // Apenas modelos da família flash-image suportam Image-to-Image.
+  // Model override: pro models return NO_IMAGE — force flash
   const SAFE_MODEL = 'gemini-3.1-flash-image-preview'
   const envModel = process.env.VS_MODEL_ID || ''
   const modelId = (!envModel || envModel.toLowerCase().includes('pro'))
-    ? (console.log(`[ai] Override: '${envModel || 'vazio'}' não suporta imagem. Usando ${SAFE_MODEL}`), SAFE_MODEL)
+    ? (console.log(`[ai] Override: '${envModel || 'empty'}' → ${SAFE_MODEL}`), SAFE_MODEL)
     : envModel
-  console.log('[ai] Using model:', modelId)
 
-  // Verbo imperativo prefixado ao prompt evita que o modelo entre em modo VQA
-  // (onde descreve a imagem em vez de transformá-la).
-  // Para limpar-baguncca usamos prefixo diferente que enfatiza "não adicionar nada".
-  const isCleanup = prompt.includes('REMOCAO DE BAGUNCCA') || prompt.includes('PINTURA DE PAREDES')
-  const actionPrompt = isCleanup
-    ? `Edit this real estate photo: remove clutter and repaint walls/ceiling as instructed. Same camera angle, framing and dimensions as input.\n\n${prompt}`
-    : `Edit this real estate photo by adding furniture. Follow the style description EXACTLY — specific furniture, materials, and colors described are mandatory.\n\n${prompt}`
-
-  // Detectar aspect ratio real da imagem de entrada (JPEG/PNG/WebP header parse)
+  // Detect aspect ratio from the input image (maps to nearest Gemini-supported value)
   const aspectRatio = detectAspectRatioFromBase64(imageBase64)
-  const imageConfig = { aspectRatio, imageSize: '2K' }
 
   try {
     const response = await client.models.generateContent({
@@ -182,79 +222,83 @@ export async function generateWithGemini({ imageBase64, prompt, mimeType = 'imag
       contents: [
         {
           parts: [
-            // Prompt de ação primeiro
-            { text: actionPrompt },
-            // Imagem de referência para transformação
-            { inlineData: { data: imageBase64, mimeType } },
+            // Text FIRST, then image — matches the Next.js route order
+            { text: prompt },
+            { inlineData: { data: imageBase64, mimeType: 'image/jpeg' } },
           ],
         },
       ],
       config: {
-        // IMAGE exclusivo: remover TEXT evita resposta VQA ("Vejo na imagem...")
+        // IMAGE-only: adding 'TEXT' activates VQA mode where model describes instead of editing
         responseModalities: ['IMAGE'],
-        imageConfig,
+        imageConfig: {
+          aspectRatio,
+          imageSize: '2K', // CRITICAL: uppercase — '2k' is silently rejected
+        },
       },
     })
-
-    // Dump bruto para diagnóstico — remove após estabilizar
-    console.log('[DEBUG AI RESPONSE DUMP]:', JSON.stringify(response, null, 2))
 
     const candidate = response.candidates?.[0]
     const finishReason = candidate?.finishReason
     console.log('[ai] Finish reason:', finishReason)
 
-    // Detectar bloqueio por safety filters
     if (finishReason === 'SAFETY' || finishReason === 'IMAGE_SAFETY') {
-      const ratings = JSON.stringify(candidate?.safetyRatings || {})
-      throw new Error(`Bloqueado por filtro de segurança. Ratings: ${ratings}`)
+      throw new Error(`Bloqueado por filtro de segurança: ${JSON.stringify(candidate?.safetyRatings)}`)
     }
-
-    // Detectar modelo errado (pro ou texto-only)
     if (finishReason === 'NO_IMAGE') {
-      throw new Error(`Modelo '${modelId}' não suporta geração de imagem (NO_IMAGE). Verifique VS_MODEL_ID.`)
+      throw new Error(`Modelo '${modelId}' não suporta geração de imagem (NO_IMAGE).`)
     }
 
-    // Extração defensiva: suporte a camelCase (inlineData) e snake_case (inline_data)
+    // Defensive extraction (camelCase + snake_case — SDK versions vary)
     const parts = candidate?.content?.parts || []
     const imagePart = parts.find(p => p.inlineData?.data || p.inline_data?.data)
     const imageData = imagePart?.inlineData?.data || imagePart?.inline_data?.data || null
     const imageMime = imagePart?.inlineData?.mimeType || imagePart?.inline_data?.mime_type || 'image/png'
+    const usageMetadata = response.usageMetadata || null
 
     if (!imageData) {
       const textFallback = parts.find(p => p.text)?.text || 'Sem resposta'
-      throw new Error(`Gemini nao retornou imagem. Parts: ${parts.length}. Texto: "${textFallback.substring(0, 300)}"`)
+      throw new Error(`Gemini não retornou imagem. Parts: ${parts.length}. Texto: "${textFallback.substring(0, 300)}"`)
     }
 
-    console.log('[ai] Imagem extraída com sucesso. mimeType:', imageMime)
+    console.log(`[ai] ✅ Imagem gerada. mimeType: ${imageMime}, aspectRatio: ${aspectRatio}`)
     return {
       success: true,
       imageBase64: imageData,
       mimeType: imageMime,
-      usageMetadata: response.usageMetadata || null,
-      modelId,   // modelo REAL usado (após model guard)
+      usageMetadata,
     }
   } catch (err) {
     console.error('[ai] Gemini error:', err.message)
-    return { success: false, error: err.message, usageMetadata: null, modelId }
+    return { success: false, error: err.message, usageMetadata: null }
   }
 }
 
 // ── Replicate image generation ────────────────────────────────────────────────
 
-export async function generateWithReplicate({ imageBase64 }) {
+/**
+ * Calls Replicate to enhance a real estate photo (foto-revista).
+ *
+ * @param {{ imageBase64: string }} params
+ * @returns {Promise<{ success: boolean, outputUrl?: string, error?: string }>}
+ */
+export async function generateWithReplicate({ imageBase64, level = 2 }) {
   const replicate = new Replicate({ auth: process.env.REPLICATE_API_TOKEN })
+
   const dataUri = `data:image/jpeg;base64,${imageBase64}`
+
+  // Select level config (default to level 2 — standard)
+  const lvl = FOTO_TURBINADA_LEVELS[level] || FOTO_TURBINADA_LEVELS[2]
 
   try {
     const output = await replicate.run(process.env.FT_MODEL_ID, {
       input: {
         image: dataUri,
-        prompt:
-          'professional real estate photography, HDR, natural lighting, sharp details, vibrant colors, high quality',
-        negative_prompt: 'blurry, low quality, distorted, noisy, dark, underexposed',
-        dynamic: 6,
-        creativity: 0.35,
-        resemblance: 0.6,
+        prompt: lvl.prompt,
+        negative_prompt: lvl.negative_prompt,
+        dynamic: lvl.dynamic,
+        creativity: lvl.creativity,
+        resemblance: lvl.resemblance,
         scale: 2,
         sd_model: 'juggernaut_reborn.safetensors [338b85bc4f]',
         scheduler: 'DPM++ 3M SDE Karras',
