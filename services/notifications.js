@@ -192,7 +192,7 @@ export async function notifyJobComplete({ userId, service, jobId, roomType, styl
     { service_type: serviceType, job_id: jobId }
   )
 
-  // 2. Email
+  // 2. Email + Telegram founder alert
   try {
     const { data: profile } = await supabase
       .from('profiles')
@@ -200,6 +200,7 @@ export async function notifyJobComplete({ userId, service, jobId, roomType, styl
       .eq('id', userId)
       .single()
 
+    // Email (only if user has email notifications enabled)
     if (profile?.email && profile.email_notifications !== false) {
       const name = profile.full_name || profile.email.split('@')[0]
       await sendEmail(
@@ -207,23 +208,23 @@ export async function notifyJobComplete({ userId, service, jobId, roomType, styl
         `✅ ${label} pronto!`,
         jobReadyEmailHtml(name, label, galleryUrl)
       )
-
-      // 3. Telegram founder alert
-      const now = new Date()
-      const date = now.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })
-      const time = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' })
-      const roomLine = roomType ? `\n🚪 *Cômodo:* ${roomType}` : ''
-      const styleLine = style ? `\n🎨 *Estilo:* ${style}` : ''
-
-      await sendTelegramAlert(
-        `✅ *GiraChavePro*\n👤 ${profile.email}\n` +
-        `✅ Processamento concluído\n━━━━━━━━━━━━━━━\n` +
-        `🔧 *Serviço:* ${label}` + roomLine + styleLine +
-        `\n💳 *Créditos usados:* ${creditsUsed ?? '?'}` +
-        `\n💰 *Saldo restante:* ${profile.credits ?? '?'}` +
-        `\n📅 *Data:* ${date} às ${time}`
-      )
     }
+
+    // 3. Telegram founder alert — always send regardless of email preference
+    const now = new Date()
+    const date = now.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })
+    const time = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' })
+    const roomLine = roomType ? `\n🚪 *Cômodo:* ${roomType}` : ''
+    const styleLine = style ? `\n🎨 *Estilo:* ${style}` : ''
+
+    await sendTelegramAlert(
+      `✅ *GiraChavePro*\n👤 ${profile?.email ?? userId}\n` +
+      `✅ Processamento concluído\n━━━━━━━━━━━━━━━\n` +
+      `🔧 *Serviço:* ${label}` + roomLine + styleLine +
+      `\n💳 *Créditos usados:* ${creditsUsed ?? '?'}` +
+      `\n💰 *Saldo restante:* ${profile?.credits ?? '?'}` +
+      `\n📅 *Data:* ${date} às ${time}`
+    )
   } catch (err) {
     console.error('[notifications] Erro ao buscar perfil para email:', err.message)
   }
