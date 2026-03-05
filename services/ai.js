@@ -176,7 +176,7 @@ function adaptPrompt(existingPrompt, roomType = '', options = {}) {
   }
 
   // ── Wall decor rule ─────────────────────────────────────────────────────
-  const wallDecorEnabled = options.decor !== false
+  const wallDecorEnabled = options.wallDecor !== false
   const wallDecorRule = wallDecorEnabled
     ? `WALL DECORATION: On any visible wall with empty space suitable for decor, add wall art appropriate to the style (framed prints, paintings, or mirrors) and/or floating shelves with style-appropriate decorative objects. The choice and quantity of wall decor must feel natural and proportional to the style aesthetic — minimal for minimalist/japandi styles, bold for luxo/art_deco styles, eclectic for boho/colorido styles, simple and affordable for popular styles.`
     : ''
@@ -205,7 +205,7 @@ function adaptPrompt(existingPrompt, roomType = '', options = {}) {
 
   const surfaceRules = hasSurfaceChange
     ? [
-        options.wallPaint  ? buildStagingWallPaintOverride(options.wallPaint)  : null,
+        options.wallPaint  ? buildStagingWallPaintOverride(options.wallPaint, options.wallTexture || null) : null,
         options.floorChange ? buildStagingFloorOverride(options.floorChange)   : null,
       ].filter(Boolean).join('\n\n')
     : `SURFACE PRESERVATION — ABSOLUTE RULE:
