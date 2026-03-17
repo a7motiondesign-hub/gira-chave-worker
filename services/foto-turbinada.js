@@ -37,10 +37,8 @@ const ESRGAN_MAX_SIDE = 1400
 // Full HD target — longest side is always 1920px, aspect ratio preserved
 const TARGET_LONG_SIDE = 1920
 
-// JPEG quality — within the 85-90% spec (Lightroom equivalent ~10-11)
-const JPEG_QUALITY = 88
-
-// Maximum output file size (hard limit per user spec)
+// Output file size target: 4–5 MB (professional quality for real estate)
+const MIN_FILE_BYTES = 4 * 1024 * 1024
 const MAX_FILE_BYTES = 5 * 1024 * 1024
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -159,7 +157,7 @@ async function step2Esrgan(inputBuffer) {
 // ── Step 3: Final export ──────────────────────────────────────────────────────
 
 async function step3FinalExport(inputBuffer) {
-  console.log('[ft:step3] Final export (Full HD, JPEG q88, sRGB)...')
+  console.log('[ft:step3] Final export (Full HD, JPEG, sRGB, target 4-5 MB)...')
 
   const meta = await sharp(inputBuffer).metadata()
   const { width, height } = meta
@@ -170,24 +168,42 @@ async function step3FinalExport(inputBuffer) {
   const newWidth    = Math.round(width  * scaleFactor)
   const newHeight   = Math.round(height * scaleFactor)
 
-  const buildExport = (quality) =>
-    sharp(inputBuffer)
-      .resize(newWidth, newHeight)
-      .toColorspace('srgb')
-      // withMetadata() is intentionally omitted: strips GPS/personal EXIF data
-      .jpeg({ quality, mozjpeg: true })
-      .toBuffer()
+  // Resize once, then encode at varying quality (avoids repeated resize CPU cost)
+  const resized = await sharp(inputBuffer)
+    .resize(newWidth, newHeight)
+    .toColorspace('srgb')
+    .toBuffer()
 
-  let exportBuf = await buildExport(JPEG_QUALITY)
+  // withMetadata() is intentionally omitted: strips GPS/personal EXIF data
+  const buildJpeg = (quality) =>
+    sharp(resized).jpeg({ quality }).toBuffer()
 
-  // Safety: if still > 5MB (unlikely after resize), reduce quality to 80
-  if (exportBuf.length > MAX_FILE_BYTES) {
-    console.warn(`[ft:step3] ${(exportBuf.length / 1024 / 1024).toFixed(1)}MB > 5MB — reduzindo para q80`)
-    exportBuf = await buildExport(80)
+  // If even q=100 is below 4 MB, the image is low-entropy — accept it as-is
+  const q100buf = await buildJpeg(100)
+  if (q100buf.length <= MIN_FILE_BYTES) {
+    const mb = (q100buf.length / 1024 / 1024).toFixed(2)
+    console.log(`[ft:step3] ✅ ${newWidth}×${newHeight} | q=100 | ${mb} MB (low-entropy — abaixo do piso de 4 MB)`)
+    return q100buf
   }
 
+  // Binary search: find the highest quality where file size <= 5 MB
+  // (monotonic: higher quality → larger file, so this maximises quality within ceiling)
+  let lo = 50, hi = 100
+  let usedQuality = 100
+  while (lo <= hi) {
+    const mid = lo + Math.floor((hi - lo) / 2)
+    const size = (await buildJpeg(mid)).length
+    if (size <= MAX_FILE_BYTES) {
+      usedQuality = mid
+      lo = mid + 1  // can try higher quality
+    } else {
+      hi = mid - 1  // over ceiling, reduce
+    }
+  }
+
+  const exportBuf = await buildJpeg(usedQuality)
   const finalMB = (exportBuf.length / 1024 / 1024).toFixed(2)
-  console.log(`[ft:step3] ✅ ${newWidth}×${newHeight} | ${finalMB} MB`)
+  console.log(`[ft:step3] ✅ ${newWidth}×${newHeight} | q=${usedQuality} | ${finalMB} MB`)
   return exportBuf
 }
 

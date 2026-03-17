@@ -29,22 +29,29 @@ const R2_PUBLIC_BASE = 'https://pub-58676ec492ce4763bc29c0609e408719.r2.dev'
  */
 export async function uploadToR2(jobId, userId, outputImageUrl) {
   let buffer
+  let contentType = 'image/jpeg'
 
   if (String(outputImageUrl).startsWith('data:')) {
-    buffer = Buffer.from(String(outputImageUrl).split(',')[1], 'base64')
+    const commaIdx = outputImageUrl.indexOf(',')
+    const meta = outputImageUrl.slice(5, commaIdx) // e.g. "image/jpeg;base64"
+    contentType = meta.split(';')[0] || 'image/jpeg'
+    buffer = Buffer.from(outputImageUrl.slice(commaIdx + 1), 'base64')
   } else {
     const res = await fetch(outputImageUrl)
     if (!res.ok) throw new Error(`R2: falha ao baixar imagem origem HTTP ${res.status}`)
+    contentType = res.headers.get('content-type') || 'image/jpeg'
     buffer = Buffer.from(await res.arrayBuffer())
   }
 
-  const key = `processed/${userId}/${jobId}_${Date.now()}.webp`
+  const extMap = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' }
+  const ext = extMap[contentType] || 'jpg'
+  const key = `processed/${userId}/${jobId}_${Date.now()}.${ext}`
 
   await s3.send(new PutObjectCommand({
     Bucket: process.env.R2_BUCKET_NAME,
     Key: key,
     Body: buffer,
-    ContentType: 'image/webp',
+    ContentType: contentType,
   }))
 
   return `${R2_PUBLIC_BASE}/${key}`
