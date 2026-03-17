@@ -13,6 +13,7 @@
 import pLimit from 'p-limit'
 import { supabase } from './lib/supabase.js'
 import { buildGeminiPrompt, generateWithGemini, generateWithReplicate, editSurfaces } from './services/ai.js'
+import { runFotoTurbinadaPipeline } from './services/foto-turbinada.js'
 import { saveOutputAndComplete, markJobFailed, requeueWithBackoff } from './services/storage.js'
 import { notifyJobComplete, notifyJobFailed } from './services/notifications.js'
 import { logAiUsage } from './services/usage-logger.js'
@@ -167,9 +168,35 @@ async function processGeminiJob(job) {
   console.log(`[worker] ✅ Gemini job ${job.id} concluído (${vsDurationMs}ms)`)
 }
 
+async function processFotoTurbinadaJob(job) {
+  console.log(`[worker] [FOTO-TURBINADA] Pipeline iniciada para job ${job.id}`)
+
+  const imageRes = await fetch(job.input_image_url)
+  if (!imageRes.ok) throw new Error(`Falha ao baixar imagem: HTTP ${imageRes.status}`)
+  const imageBuffer = Buffer.from(await imageRes.arrayBuffer())
+  const mimeType = imageRes.headers.get('content-type') || 'image/jpeg'
+
+  const t0 = Date.now()
+  const outputDataUri = await runFotoTurbinadaPipeline(imageBuffer, mimeType)
+  console.log(`[worker] [FOTO-TURBINADA] Pipeline concluída em ${((Date.now() - t0) / 1000).toFixed(1)}s`)
+
+  await saveOutputAndComplete(job.id, job.user_id, outputDataUri)
+
+  await notifyJobComplete({
+    userId: job.user_id,
+    service: job.service,
+    jobId: job.id,
+    roomType: job.room_type,
+    style: job.style,
+    creditsUsed: job.credits_used,
+  }).catch(err => console.error('[worker] notifyJobComplete error:', err.message))
+
+  console.log(`[worker] ✅ Foto Turbinada job ${job.id} concluído`)
+}
+
 async function processReplicateJob(job) {
-  // Safety guard: Replicate must never run for foto-revista now.
-  throw new Error('REPLICATE DISABLED — foto-revista deve rodar no Gemini Clean Up Level 1')
+  // Replicate direct path is disabled — foto-revista uses the full pipeline
+  throw new Error('REPLICATE DISABLED — foto-revista roda pela pipeline Foto Turbinada')
 }
 
 // ── Error handler ─────────────────────────────────────────────────────────────
@@ -205,11 +232,10 @@ async function processQueue() {
 
   if (!jobs || jobs.length === 0) return
 
-  // MUDANÇA TEMPORÁRIA: foto-revista agora processa via Gemini (Step 0 - Limpar Bagunça)
-  const geminiJobs   = jobs.filter(j => j.service === 'virtual-staging' || j.service === 'limpar-baguncca' || j.service === 'foto-revista')
-  const replicateJobs = [] // jobs.filter(j => j.service === 'foto-revista')
+  const geminiJobs       = jobs.filter(j => j.service === 'virtual-staging' || j.service === 'limpar-baguncca')
+  const fotoTurbinadaJobs = jobs.filter(j => j.service === 'foto-revista')
 
-  console.log(`[worker] Ciclo: ${geminiJobs.length} Gemini + 0 Replicate (Replicate desativado)`) // clarity
+  console.log(`[worker] Ciclo: ${geminiJobs.length} Gemini | ${fotoTurbinadaJobs.length} Foto Turbinada`)
 
   // Gemini: up to 2 concurrent via p-limit
   const geminiPromise = Promise.allSettled(
@@ -218,9 +244,17 @@ async function processQueue() {
     )
   )
 
-  // Replicate desativado explicitamente
-  await geminiPromise
-  console.log(`[worker] Ciclo concluído: ${jobs.length} jobs processados (somente Gemini)`) 
+  // Foto Turbinada: sequential (Replicate rate limits)
+  const fotoTurbinadaPromise = (async () => {
+    for (let i = 0; i < fotoTurbinadaJobs.length; i++) {
+      const job = fotoTurbinadaJobs[i]
+      await processFotoTurbinadaJob(job).catch(err => handleJobError(job, err))
+      if (i < fotoTurbinadaJobs.length - 1) await sleep(REPLICATE_DELAY)
+    }
+  })()
+
+  await Promise.all([geminiPromise, fotoTurbinadaPromise])
+  console.log(`[worker] Ciclo concluído: ${jobs.length} jobs processados`)
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
