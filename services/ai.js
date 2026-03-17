@@ -55,17 +55,9 @@ export function buildGeminiPrompt(job) {
     return buildReferencePrompt(job.room_type, job.options || {})
   }
 
-  if (job.service === 'limpar-baguncca') {
-    const opts = job.options || {}
-    const level = opts.level || 1
-
-    if (level === 3) {
-      return buildCleanUpLevel3(opts.wallColor || 'Branco Neve', opts.floorType || 'Porcelanato Claro')
-    }
-    if (level === 2) {
-      return buildCleanUpLevel2(opts.wallColor || 'Branco Neve')
-    }
-    // Level 1 (default)
+  // Foto Turbinada (foto-revista) agora usa o modelo do Limpar Bagunça (Gemini)
+  // como "Step 0" (remoca de bagunca nivel 1) e ignora o resto.
+  if (job.service === 'limpar-baguncca' || job.service === 'foto-revista') {
     return CLEAN_UP_LEVEL_1
   }
 
@@ -301,6 +293,15 @@ export async function generateWithGemini({ imageBase64, prompt, referenceImageBa
 
   // Detect aspect ratio from the input image (maps to nearest Gemini-supported value)
   const aspectRatio = detectAspectRatioFromBase64(imageBase64)
+
+  // [COMPARE_DEBUG] Logging for comparison
+  console.log('\n--- [COMPARE_DEBUG] WORKER (generateWithGemini) ---')
+  console.log(`Model ID: ${modelId}`)
+  console.log(`Aspect Ratio: ${aspectRatio}`)
+  console.log(`Has Reference Image: ${!!referenceImageBase64}`)
+  console.log(`Prompt Length: ${prompt.length}`)
+  console.log(`Prompt PREVIEW:\n${prompt.substring(0, 500)}\n...\n${prompt.substring(prompt.length - 200)}`)
+  console.log('---------------------------------------------------\n')
 
   try {
     const requestParts = [

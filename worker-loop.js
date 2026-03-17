@@ -24,6 +24,11 @@ const MAX_RETRY        = 3
 
 const geminiLimit = pLimit(2)     // max 2 Gemini requests in flight at once
 
+console.log('=========================================================================================\n')
+console.log('   [PATCH] FOTO_TURBINADA_FORCE_GEMINI ACTIVATED\n')
+console.log('   Running patched version that forces Foto Turbinada through Gemini (Step 0) pipeline\n')
+console.log('=========================================================================================\n')
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function sleep(ms) {
@@ -47,6 +52,9 @@ function isTransientError(msg = '') {
 // ── Job processors ────────────────────────────────────────────────────────────
 
 async function processGeminiJob(job) {
+  if (job.service === 'foto-revista') {
+     console.log(`[worker] [FOTO-TURBINADA] Override: forcing Gemini Clean Up Level 1 for job ${job.id}`)
+  }
   console.log(`[worker] Gemini job ${job.id} | service=${job.service} | retry=${job.retry_count}`)
 
   // ── 🔍 DEBUG: dump completo dos campos do job ─────────────────────────
@@ -120,11 +128,15 @@ async function processGeminiJob(job) {
   const vsDurationMs = Date.now() - vsStart
 
   // Log AI usage (fire-and-forget)
+  let featureKey = 'virtual_staging'
+  if (job.service === 'limpar-baguncca') featureKey = 'limpar_baguncca'
+  if (job.service === 'foto-revista') featureKey = 'limpar_baguncca' // Tracking as cleanup (implementation detail)
+
   logAiUsage({
     userId: job.user_id,
     sessionId: job.id,
     model: process.env.VS_MODEL_ID || 'gemini-3.1-pro-preview',
-    feature: job.service === 'limpar-baguncca' ? 'limpar_baguncca' : 'virtual_staging',
+    feature: featureKey,
     usageMetadata: result.usageMetadata,
     durationMs: vsDurationMs,
     metadata: {
@@ -156,31 +168,8 @@ async function processGeminiJob(job) {
 }
 
 async function processReplicateJob(job) {
-  console.log(`[worker] Replicate job ${job.id} | retry=${job.retry_count}`)
-
-  const imageRes = await fetch(job.input_image_url)
-  if (!imageRes.ok) throw new Error(`Falha ao baixar imagem: HTTP ${imageRes.status}`)
-  const imageBase64 = Buffer.from(await imageRes.arrayBuffer()).toString('base64')
-
-  const ftLevel = job.options?.level || 2
-  const result = await generateWithReplicate({ imageBase64, level: ftLevel })
-
-  if (!result.success) {
-    const err = new Error(result.error || 'Replicate falhou')
-    err.is429 = result.is429 ?? false
-    throw err
-  }
-
-  await saveOutputAndComplete(job.id, job.user_id, result.outputUrl)
-
-  await notifyJobComplete({
-    userId: job.user_id,
-    service: job.service,
-    jobId: job.id,
-    creditsUsed: job.credits_used,
-  }).catch(err => console.error('[worker] notifyJobComplete error:', err.message))
-
-  console.log(`[worker] ✅ Replicate job ${job.id} concluído`)
+  // Safety guard: Replicate must never run for foto-revista now.
+  throw new Error('REPLICATE DISABLED — foto-revista deve rodar no Gemini Clean Up Level 1')
 }
 
 // ── Error handler ─────────────────────────────────────────────────────────────
@@ -216,10 +205,11 @@ async function processQueue() {
 
   if (!jobs || jobs.length === 0) return
 
-  const geminiJobs   = jobs.filter(j => j.service === 'virtual-staging' || j.service === 'limpar-baguncca')
-  const replicateJobs = jobs.filter(j => j.service === 'foto-revista')
+  // MUDANÇA TEMPORÁRIA: foto-revista agora processa via Gemini (Step 0 - Limpar Bagunça)
+  const geminiJobs   = jobs.filter(j => j.service === 'virtual-staging' || j.service === 'limpar-baguncca' || j.service === 'foto-revista')
+  const replicateJobs = [] // jobs.filter(j => j.service === 'foto-revista')
 
-  console.log(`[worker] Ciclo: ${geminiJobs.length} Gemini + ${replicateJobs.length} Replicate`)
+  console.log(`[worker] Ciclo: ${geminiJobs.length} Gemini + 0 Replicate (Replicate desativado)`) // clarity
 
   // Gemini: up to 2 concurrent via p-limit
   const geminiPromise = Promise.allSettled(
@@ -228,21 +218,9 @@ async function processQueue() {
     )
   )
 
-  // Replicate: strictly sequential with 700ms gap
-  const replicatePromise = (async () => {
-    for (let i = 0; i < replicateJobs.length; i++) {
-      const job = replicateJobs[i]
-      try {
-        await processReplicateJob(job)
-      } catch (err) {
-        await handleJobError(job, err)
-      }
-      if (i < replicateJobs.length - 1) await sleep(REPLICATE_DELAY)
-    }
-  })()
-
-  await Promise.allSettled([geminiPromise, replicatePromise])
-  console.log(`[worker] Ciclo concluído: ${jobs.length} jobs processados`)
+  // Replicate desativado explicitamente
+  await geminiPromise
+  console.log(`[worker] Ciclo concluído: ${jobs.length} jobs processados (somente Gemini)`) 
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
