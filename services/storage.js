@@ -5,6 +5,7 @@
  * marks the replicate_job as completed in Supabase.
  */
 
+import sharp from 'sharp'
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3'
 import { supabase } from '../lib/supabase.js'
 
@@ -29,23 +30,25 @@ const R2_PUBLIC_BASE = 'https://pub-58676ec492ce4763bc29c0609e408719.r2.dev'
  */
 export async function uploadToR2(jobId, userId, outputImageUrl) {
   let buffer
-  let contentType = 'image/jpeg'
 
   if (String(outputImageUrl).startsWith('data:')) {
     const commaIdx = outputImageUrl.indexOf(',')
-    const meta = outputImageUrl.slice(5, commaIdx) // e.g. "image/jpeg;base64"
-    contentType = meta.split(';')[0] || 'image/jpeg'
     buffer = Buffer.from(outputImageUrl.slice(commaIdx + 1), 'base64')
   } else {
     const res = await fetch(outputImageUrl)
     if (!res.ok) throw new Error(`R2: falha ao baixar imagem origem HTTP ${res.status}`)
-    contentType = res.headers.get('content-type') || 'image/jpeg'
     buffer = Buffer.from(await res.arrayBuffer())
   }
 
-  const extMap = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' }
-  const ext = extMap[contentType] || 'jpg'
-  const key = `processed/${userId}/${jobId}_${Date.now()}.${ext}`
+  // ALWAYS convert to JPEG — Gemini returns WebP, we want JPEG everywhere
+  const meta = await sharp(buffer).metadata()
+  if (meta.format !== 'jpeg') {
+    console.log(`[storage] Convertendo ${meta.format} → JPEG para job ${jobId}`)
+    buffer = await sharp(buffer).jpeg({ quality: 92 }).toBuffer()
+  }
+
+  const contentType = 'image/jpeg'
+  const key = `processed/${userId}/${jobId}_${Date.now()}.jpg`
 
   await s3.send(new PutObjectCommand({
     Bucket: process.env.R2_BUCKET_NAME,
@@ -54,7 +57,8 @@ export async function uploadToR2(jobId, userId, outputImageUrl) {
     ContentType: contentType,
   }))
 
-  return `${R2_PUBLIC_BASE}/${key}`
+  const url = `${R2_PUBLIC_BASE}/${key}`
+  return { url, buffer }
 }
 
 /**
@@ -67,21 +71,49 @@ export async function uploadToR2(jobId, userId, outputImageUrl) {
  */
 export async function saveOutputAndComplete(jobId, userId, outputImageUrl) {
   let permanentUrl = outputImageUrl
+  let imageBuffer = null
 
   try {
-    permanentUrl = await uploadToR2(jobId, userId, outputImageUrl)
+    const { url, buffer } = await uploadToR2(jobId, userId, outputImageUrl)
+    permanentUrl = url
+    imageBuffer = buffer
   } catch (err) {
     console.error(`[storage] R2 upload falhou para job ${jobId}:`, err.message)
     // fallback: keep the original URL (data URIs won't persist across restarts, but better than failing)
   }
 
+  // Generate and save compressed thumbnail
+  let thumbnailUrl = null
+  if (imageBuffer) {
+    try {
+      const thumbBuffer = await sharp(imageBuffer)
+        .rotate()
+        .resize({ width: 800, withoutEnlargement: true })
+        .jpeg({ quality: 80 })
+        .toBuffer()
+      const thumbKey = `thumbnails/${userId}/job_${jobId}_thumb.jpg`
+      await s3.send(new PutObjectCommand({
+        Bucket: process.env.R2_BUCKET_NAME,
+        Key: thumbKey,
+        Body: thumbBuffer,
+        ContentType: 'image/jpeg',
+      }))
+      thumbnailUrl = `${R2_PUBLIC_BASE}/${thumbKey}`
+    } catch (thumbErr) {
+      console.warn(`[storage] Thumbnail generation failed for job ${jobId}:`, thumbErr.message)
+    }
+  }
+
+  const updateData = {
+    status: 'completed',
+    output_image_url: permanentUrl,
+    completed_at: new Date().toISOString(),
+    ...(thumbnailUrl && { thumbnail_url: thumbnailUrl }),
+  }
+
   const { error } = await supabase
     .from('replicate_jobs')
-    .update({
-      status: 'completed',
-      output_image_url: permanentUrl,
-      completed_at: new Date().toISOString(),
-    })
+    .update(updateData)
     .eq('id', jobId)
 
   if (error) {

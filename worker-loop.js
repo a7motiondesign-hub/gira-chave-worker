@@ -11,6 +11,7 @@
  */
 
 import pLimit from 'p-limit'
+import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3'
 import { supabase } from './lib/supabase.js'
 import { buildGeminiPrompt, generateWithGemini, generateWithReplicate, editSurfaces } from './services/ai.js'
 import { runFotoTurbinadaPipeline } from './services/foto-turbinada.js'
@@ -24,6 +25,66 @@ const REPLICATE_DELAY  = 700      // ms between Replicate calls (rate limit: ≤
 const MAX_RETRY        = 3
 
 const geminiLimit = pLimit(2)     // max 2 Gemini requests in flight at once
+
+const R2_PUBLIC_BASE = 'https://pub-58676ec492ce4763bc29c0609e408719.r2.dev/'
+
+let _s3 = null
+function getS3() {
+  if (_s3) return _s3
+  _s3 = new S3Client({
+    region: 'auto',
+    endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+    credentials: {
+      accessKeyId: process.env.R2_ACCESS_KEY_ID,
+      secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+    },
+  })
+  return _s3
+}
+
+/**
+ * Downloads an image, trying public URL first then S3 API for R2 URLs.
+ * Handles /api/uploads/:id/image relative paths by looking up the real file_url from Supabase.
+ * Returns a Buffer.
+ */
+async function downloadInputImage(url) {
+  // Handle relative /api/uploads/:id/image proxy paths saved in DB
+  if (url && url.startsWith('/api/uploads/')) {
+    const uploadId = url.split('/')[3]
+    console.log(`[worker] Resolving relative upload URL → lookup upload ${uploadId}`)
+    const { data: upload } = await supabase.from('uploads').select('file_url').eq('id', uploadId).single()
+    if (upload?.file_url && upload.file_url.startsWith('http')) {
+      url = upload.file_url
+      console.log(`[worker] Resolved to: ${url.substring(0, 80)}`)
+    } else {
+      throw new Error(`Não foi possível resolver URL de upload ${uploadId}`)
+    }
+  }
+
+  // Try public URL first
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(15000) })
+    if (res.ok) return Buffer.from(await res.arrayBuffer())
+    console.warn(`[worker] Public fetch HTTP ${res.status} for ${url.substring(0, 80)}`)
+  } catch (err) {
+    console.warn(`[worker] Public fetch failed: ${err.message}`)
+  }
+
+  // Fallback: use S3 GetObject for R2 URLs
+  if (url.startsWith(R2_PUBLIC_BASE)) {
+    const key = decodeURIComponent(url.slice(R2_PUBLIC_BASE.length))
+    console.log(`[worker] Fallback: S3 GetObject for key=${key}`)
+    const obj = await getS3().send(new GetObjectCommand({
+      Bucket: process.env.R2_BUCKET_NAME,
+      Key: key,
+    }))
+    const chunks = []
+    for await (const chunk of obj.Body) chunks.push(chunk)
+    return Buffer.concat(chunks)
+  }
+
+  throw new Error(`Falha ao baixar imagem: ${url.substring(0, 80)}`)
+}
 
 console.log('=========================================================================================\n')
 console.log('   [PATCH] FOTO_TURBINADA_FORCE_GEMINI ACTIVATED\n')
@@ -45,6 +106,8 @@ function isTransientError(msg = '') {
     m.includes('socket') ||
     m.includes('rate limit') ||
     m.includes('too many requests') ||
+    m.includes('fetch failed') ||
+    m.includes('connect') ||
     m.includes('503') ||
     m.includes('502')
   )
@@ -67,9 +130,8 @@ async function processGeminiJob(job) {
     options    = ${JSON.stringify(job.options)}
     type(options) = ${typeof job.options}`)
 
-  const imageRes = await fetch(job.input_image_url)
-  if (!imageRes.ok) throw new Error(`Falha ao baixar imagem: HTTP ${imageRes.status}`)
-  let imageBase64 = Buffer.from(await imageRes.arrayBuffer()).toString('base64')
+  const imageBuffer = await downloadInputImage(job.input_image_url)
+  let imageBase64 = imageBuffer.toString('base64')
 
   const opts = job.options || {}
   const needsSurfaceEdit = !!(opts.wallPaint || opts.floorChange)
@@ -171,13 +233,10 @@ async function processGeminiJob(job) {
 async function processFotoTurbinadaJob(job) {
   console.log(`[worker] [FOTO-TURBINADA] Pipeline iniciada para job ${job.id}`)
 
-  const imageRes = await fetch(job.input_image_url)
-  if (!imageRes.ok) throw new Error(`Falha ao baixar imagem: HTTP ${imageRes.status}`)
-  const imageBuffer = Buffer.from(await imageRes.arrayBuffer())
-  const mimeType = imageRes.headers.get('content-type') || 'image/jpeg'
+  const imageBuffer = await downloadInputImage(job.input_image_url)
 
   const t0 = Date.now()
-  const outputDataUri = await runFotoTurbinadaPipeline(imageBuffer, mimeType)
+  const outputDataUri = await runFotoTurbinadaPipeline(imageBuffer)
   console.log(`[worker] [FOTO-TURBINADA] Pipeline concluída em ${((Date.now() - t0) / 1000).toFixed(1)}s`)
 
   await saveOutputAndComplete(job.id, job.user_id, outputDataUri)
